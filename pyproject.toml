@@ -17,7 +17,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-embeddings = ["sentence-transformers>=3.0"]
+embeddings = [
+    "sentence-transformers>=3.0",
+    # Listed explicitly so uv can pull the CPU-only build (see [tool.uv.sources]).
+    "torch>=2.4",
+]
 
 [project.scripts]
 jargonator = "jargonator.main:main"
@@ -30,6 +34,14 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
 ]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]
