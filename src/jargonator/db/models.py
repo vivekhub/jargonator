@@ -57,6 +57,7 @@ class Game(Base):
     lobby_deadline: Mapped[datetime | None] = mapped_column(UTCDateTime)
     idle_deadline: Mapped[datetime | None] = mapped_column(UTCDateTime)
     last_activity_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    last_writer: Mapped[str | None] = mapped_column(SLACK_ID)
 
 
 class Player(Base):

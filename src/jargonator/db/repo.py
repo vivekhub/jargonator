@@ -4,21 +4,41 @@ Every public method runs in its own transaction and returns plain records.
 """
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
-from sqlalchemy import case, select, update
+from sqlalchemy import case, delete, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jargonator.db.models import Game, Player
-from jargonator.db.records import GameRecord, PlayerRecord
-from jargonator.domain.state import GameState, PlayerStatus
+from jargonator.db.models import Game, Guess, Player, Round, RoundGuesser, TurnOrderEntry
+from jargonator.db.records import (
+    GameRecord,
+    GuessRecord,
+    PlayerRecord,
+    RoundGuesserRecord,
+    RoundRecord,
+)
+from jargonator.domain.state import GameState, PlayerStatus, RoundStatus
+from jargonator.domain.turn_order import TurnOrder
 
 
 class ChannelBusyError(Exception):
     """The channel already has an active game (spec §3.2)."""
+
+
+class DuplicateGuessError(Exception):
+    """The user has already guessed in this round (spec §3.6: one final guess)."""
+
+
+class GuessResult(NamedTuple):
+    guess_id: str
+    similarity: float | None
+    rank: int | None
+    points: int
+    moderated_out: bool
 
 
 GAME_UPDATABLE = frozenset(
@@ -35,6 +55,23 @@ GAME_UPDATABLE = frozenset(
     }
 )
 PLAYER_UPDATABLE = frozenset({"status", "consecutive_misses", "left_at", "joined_at"})
+ROUND_UPDATABLE = frozenset(
+    {
+        "status",
+        "level",
+        "sentence",
+        "jargon",
+        "quip",
+        "guess_deadline",
+        "host_claim_at",
+        "status_message_ts",
+        "results_message_ts",
+        "writer_bonus_awarded",
+        "ended_at",
+        "writer_deadline",
+        "writer_reminder_at",
+    }
+)
 
 
 class RepoProtocol(Protocol):
@@ -75,6 +112,45 @@ class RepoProtocol(Protocol):
         self, game_id: str, user_id: str, points: int, *, round_win: bool
     ) -> PlayerRecord: ...
 
+    async def create_round(
+        self,
+        *,
+        game_id: str,
+        number: int,
+        writer_user_id: str,
+        writer_deadline: datetime | None,
+        writer_reminder_at: datetime | None,
+        now: datetime,
+    ) -> RoundRecord: ...
+
+    async def get_round(self, round_id: str) -> RoundRecord | None: ...
+
+    async def get_current_round(self, game_id: str) -> RoundRecord | None: ...
+
+    async def list_rounds(self, game_id: str) -> list[RoundRecord]: ...
+
+    async def update_round(self, round_id: str, **fields: Any) -> RoundRecord: ...
+
+    async def add_round_guessers(
+        self, round_id: str, guessers: Sequence[tuple[str, str]]
+    ) -> None: ...
+
+    async def set_guesser_dm_ts(self, round_id: str, user_id: str, ts: str) -> None: ...
+
+    async def get_round_guessers(self, round_id: str) -> list[RoundGuesserRecord]: ...
+
+    async def add_guess(
+        self, round_id: str, user_id: str, text: str, now: datetime
+    ) -> GuessRecord: ...
+
+    async def get_guesses(self, round_id: str) -> list[GuessRecord]: ...
+
+    async def save_guess_results(self, round_id: str, results: Sequence[GuessResult]) -> None: ...
+
+    async def save_turn_order(self, game_id: str, turn_order: TurnOrder) -> None: ...
+
+    async def load_turn_order(self, game_id: str) -> TurnOrder | None: ...
+
 
 def _game_record(g: Game) -> GameRecord:
     return GameRecord(
@@ -94,6 +170,7 @@ def _game_record(g: Game) -> GameRecord:
         lobby_deadline=g.lobby_deadline,
         idle_deadline=g.idle_deadline,
         last_activity_at=g.last_activity_at,
+        last_writer=g.last_writer,
     )
 
 
@@ -107,6 +184,43 @@ def _player_record(p: Player) -> PlayerRecord:
         consecutive_misses=p.consecutive_misses,
         joined_at=p.joined_at,
         left_at=p.left_at,
+    )
+
+
+def _round_record(r: Round) -> RoundRecord:
+    return RoundRecord(
+        id=r.id,
+        game_id=r.game_id,
+        number=r.number,
+        writer_user_id=r.writer_user_id,
+        status=r.status,
+        level=r.level,
+        sentence=r.sentence,
+        jargon=r.jargon,
+        quip=r.quip,
+        writer_deadline=r.writer_deadline,
+        writer_reminder_at=r.writer_reminder_at,
+        guess_deadline=r.guess_deadline,
+        host_claim_at=r.host_claim_at,
+        status_message_ts=r.status_message_ts,
+        results_message_ts=r.results_message_ts,
+        writer_bonus_awarded=r.writer_bonus_awarded,
+        started_at=r.started_at,
+        ended_at=r.ended_at,
+    )
+
+
+def _guess_record(g: Guess) -> GuessRecord:
+    return GuessRecord(
+        id=g.id,
+        round_id=g.round_id,
+        user_id=g.user_id,
+        text=g.text,
+        submitted_at=g.submitted_at,
+        moderated_out=g.moderated_out,
+        similarity=g.similarity,
+        rank=g.rank,
+        points=g.points,
     )
 
 
@@ -277,6 +391,178 @@ class Repo:
                 )
             )
             return await self._require_player(session, game_id, user_id)
+
+    # --- rounds -----------------------------------------------------------------------
+
+    async def create_round(
+        self,
+        *,
+        game_id: str,
+        number: int,
+        writer_user_id: str,
+        writer_deadline: datetime | None,
+        writer_reminder_at: datetime | None,
+        now: datetime,
+    ) -> RoundRecord:
+        rnd = Round(
+            id=str(uuid.uuid4()),
+            game_id=game_id,
+            number=number,
+            writer_user_id=writer_user_id,
+            status=RoundStatus.AWAITING_SENTENCE,
+            writer_deadline=writer_deadline,
+            writer_reminder_at=writer_reminder_at,
+            writer_bonus_awarded=False,
+            started_at=now,
+        )
+        async with self._sessionmaker.begin() as session:
+            session.add(rnd)
+            await session.flush()
+            await session.refresh(rnd)
+            return _round_record(rnd)
+
+    async def get_round(self, round_id: str) -> RoundRecord | None:
+        async with self._sessionmaker() as session:
+            rnd = await session.get(Round, round_id)
+            return _round_record(rnd) if rnd else None
+
+    async def get_current_round(self, game_id: str) -> RoundRecord | None:
+        async with self._sessionmaker() as session:
+            rnd = await session.scalar(
+                select(Round).where(Round.game_id == game_id).order_by(Round.number.desc()).limit(1)
+            )
+            return _round_record(rnd) if rnd else None
+
+    async def list_rounds(self, game_id: str) -> list[RoundRecord]:
+        async with self._sessionmaker() as session:
+            rounds = await session.scalars(
+                select(Round).where(Round.game_id == game_id).order_by(Round.number)
+            )
+            return [_round_record(r) for r in rounds]
+
+    async def update_round(self, round_id: str, **fields: Any) -> RoundRecord:
+        _check_fields(fields, ROUND_UPDATABLE)
+        async with self._sessionmaker.begin() as session:
+            rnd = await session.get(Round, round_id)
+            if rnd is None:
+                raise LookupError(f"Round {round_id} not found")
+            for name, value in fields.items():
+                setattr(rnd, name, value)
+            await session.flush()
+            await session.refresh(rnd)
+            return _round_record(rnd)
+
+    # --- guessers and guesses -------------------------------------------------------------
+
+    async def add_round_guessers(self, round_id: str, guessers: Sequence[tuple[str, str]]) -> None:
+        """Record who received the jargon: ``(user_id, dm_channel_id)`` pairs."""
+        async with self._sessionmaker.begin() as session:
+            session.add_all(
+                RoundGuesser(round_id=round_id, user_id=user_id, dm_channel_id=dm_channel)
+                for user_id, dm_channel in guessers
+            )
+
+    async def set_guesser_dm_ts(self, round_id: str, user_id: str, ts: str) -> None:
+        async with self._sessionmaker.begin() as session:
+            await session.execute(
+                update(RoundGuesser)
+                .where(RoundGuesser.round_id == round_id, RoundGuesser.user_id == user_id)
+                .values(dm_message_ts=ts)
+            )
+
+    async def get_round_guessers(self, round_id: str) -> list[RoundGuesserRecord]:
+        async with self._sessionmaker() as session:
+            rows = await session.scalars(
+                select(RoundGuesser)
+                .where(RoundGuesser.round_id == round_id)
+                .order_by(RoundGuesser.user_id)
+            )
+            return [
+                RoundGuesserRecord(r.round_id, r.user_id, r.dm_channel_id, r.dm_message_ts)
+                for r in rows
+            ]
+
+    async def add_guess(self, round_id: str, user_id: str, text: str, now: datetime) -> GuessRecord:
+        guess = Guess(
+            id=str(uuid.uuid4()),
+            round_id=round_id,
+            user_id=user_id,
+            text=text,
+            submitted_at=now,
+            moderated_out=False,
+            points=0,
+        )
+        try:
+            async with self._sessionmaker.begin() as session:
+                session.add(guess)
+                await session.flush()
+                await session.refresh(guess)
+                return _guess_record(guess)
+        except IntegrityError as exc:
+            if "UNIQUE" in str(exc.orig):
+                raise DuplicateGuessError(f"{user_id} already guessed in {round_id}") from exc
+            raise
+
+    async def get_guesses(self, round_id: str) -> list[GuessRecord]:
+        """All guesses for a round, in submission order."""
+        async with self._sessionmaker() as session:
+            guesses = await session.scalars(
+                select(Guess)
+                .where(Guess.round_id == round_id)
+                .order_by(Guess.submitted_at, Guess.id)
+            )
+            return [_guess_record(g) for g in guesses]
+
+    async def save_guess_results(self, round_id: str, results: Sequence[GuessResult]) -> None:
+        async with self._sessionmaker.begin() as session:
+            for result in results:
+                await session.execute(
+                    update(Guess)
+                    .where(Guess.id == result.guess_id, Guess.round_id == round_id)
+                    .values(
+                        similarity=result.similarity,
+                        rank=result.rank,
+                        points=result.points,
+                        moderated_out=result.moderated_out,
+                    )
+                )
+
+    # --- turn order ---------------------------------------------------------------------
+
+    async def save_turn_order(self, game_id: str, turn_order: TurnOrder) -> None:
+        """Replace the stored turn order (and the game's last writer) atomically."""
+        async with self._sessionmaker.begin() as session:
+            await session.execute(delete(TurnOrderEntry).where(TurnOrderEntry.game_id == game_id))
+            session.add_all(
+                TurnOrderEntry(
+                    game_id=game_id,
+                    cycle_no=cycle_no,
+                    position=position,
+                    user_id=user_id,
+                    consumed=consumed,
+                )
+                for cycle_no, position, user_id, consumed in turn_order.to_rows()
+            )
+            await session.execute(
+                update(Game).where(Game.id == game_id).values(last_writer=turn_order.last_writer)
+            )
+
+    async def load_turn_order(self, game_id: str) -> TurnOrder | None:
+        """Return the stored turn order, or ``None`` if the game hasn't started."""
+        async with self._sessionmaker() as session:
+            rows = list(
+                await session.scalars(
+                    select(TurnOrderEntry)
+                    .where(TurnOrderEntry.game_id == game_id)
+                    .order_by(TurnOrderEntry.position)
+                )
+            )
+            if not rows:
+                return None
+            last_writer = await session.scalar(select(Game.last_writer).where(Game.id == game_id))
+            return TurnOrder.from_rows(
+                [(r.cycle_no, r.position, r.user_id, r.consumed) for r in rows], last_writer
+            )
 
     # --- helpers ----------------------------------------------------------------------
 

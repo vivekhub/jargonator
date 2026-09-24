@@ -28,3 +28,7 @@ Decisions made during implementation that `spec.md` does not cover.
 | 2026-09-24 | stdlib loggers (alembic, slack, aiohttp) go through structlog's JSON formatter; alembic/sqlalchemy are held at WARNING | Every stdout line stays valid JSON (spec §14). |
 | 2026-09-24 | SQLite runs with a 30 s busy timeout, WAL mode and foreign keys on | Concurrent async writers wait instead of failing with "database is locked". |
 | 2026-09-24 | Rounds get UNIQUE(game_id, number), and players get an index on user_id | Cheap integrity guarantee, and it speeds up the one-game-per-player lookup. |
+| 2026-09-24 | No `status_message_channel` column on rounds (the prompt plan's optional addition) | Round status and results messages are always posted in the game's own channel, which the game record already stores. |
+| 2026-09-24 | `games.last_writer` added in migration 0002. It's written only by `save_turn_order`, not via `update_game` | It belongs to the turn order and must be saved in the same transaction as the turn-order rows. |
+| 2026-09-24 | `save_guess_results` takes `GuessResult` named tuples, not bare tuples | Keeps the argument self-documenting and type-checked. |
+| 2026-09-24 | `add_guess` raises `DuplicateGuessError` only for UNIQUE violations. Other integrity errors (e.g. an unknown round) propagate unchanged | Avoids masking real bugs as "you already guessed". |

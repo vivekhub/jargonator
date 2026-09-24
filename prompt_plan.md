@@ -837,7 +837,7 @@ Final: update DECISIONS.md with anything decided along the way, and confirm all 
 - [x] 4 Round scoring
 - [x] 5 Standings and leakage
 - [x] 6 DB models, migration, game/player repo, container
-- [ ] 7 Round/guess/turn-order repo
+- [x] 7 Round/guess/turn-order repo
 - [ ] 8 Similarity scorer
 - [ ] 9 LLM client
 - [ ] 10 LLM tasks and prompts
