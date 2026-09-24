@@ -58,3 +58,17 @@ def test_invalid_level_rejected() -> None:
 def test_stdlib_logging_level_set() -> None:
     configure_logging("WARNING")
     assert logging.getLogger().level == logging.WARNING
+
+
+def test_stdlib_loggers_emit_json(capsys: pytest.CaptureFixture[str]) -> None:
+    configure_logging("INFO")
+    logging.getLogger("some.library").warning("from stdlib %s", "logging")
+    record = _last_json_line(capsys.readouterr().out)
+    assert record["event"] == "from stdlib logging"
+    assert record["level"] == "warning"
+    assert record["logger"] == "some.library"
+
+
+def test_noisy_library_loggers_quieted() -> None:
+    configure_logging("INFO")
+    assert logging.getLogger("alembic").level == logging.WARNING

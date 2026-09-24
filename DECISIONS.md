@@ -20,3 +20,11 @@ Decisions made during implementation that `spec.md` does not cover.
 | 2026-09-24 | The leakage stemmer also strips a trailing "e", and "es" is handled before "s" | Needed so "horse"/"horses" and "like"/"liked"/"liking" match. The prompt's suggested rule set would have mismatched them. |
 | 2026-09-24 | `leaked_words` returns the words as written in the original, not their stems | They go into the stricter jargon prompt ("do not use: cats"), where real words read better than stems like "lik". |
 | 2026-09-24 | The best-guess and most-unhinged highlights go to the earlier round on a tie | Deterministic, and rewards whoever got there first. |
+| 2026-09-24 | Migrations live in `src/jargonator/db/migrations` (not a top-level `migrations/`) | They ship inside the installed package, so the Docker image can run them without the source tree. The root `alembic.ini` points there for CLI use. |
+| 2026-09-24 | Migrations run synchronously (plain `sqlite` driver) via `asyncio.to_thread` | Alembic's async env would need a second event loop inside the app's running loop. |
+| 2026-09-24 | Migrations are hand-written with plain SQLAlchemy types. A test asserts no autogenerate diff against the models | Keeps migrations independent of app code that may change later, while guaranteeing they match. |
+| 2026-09-24 | A player returning from `left` gets a fresh `joined_at`. Inactive→active keeps it | Someone who left and came back shouldn't count as the longest-standing player for host transfer (spec §3.10). |
+| 2026-09-24 | `find_active_game_for_user` counts `inactive` players as still in the game | Inactive players are still in the game (score kept, can rejoin with Join), so they can't be in two games at once. |
+| 2026-09-24 | stdlib loggers (alembic, slack, aiohttp) go through structlog's JSON formatter; alembic/sqlalchemy are held at WARNING | Every stdout line stays valid JSON (spec §14). |
+| 2026-09-24 | SQLite runs with a 30 s busy timeout, WAL mode and foreign keys on | Concurrent async writers wait instead of failing with "database is locked". |
+| 2026-09-24 | Rounds get UNIQUE(game_id, number), and players get an index on user_id | Cheap integrity guarantee, and it speeds up the one-game-per-player lookup. |

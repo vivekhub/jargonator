@@ -1,14 +1,27 @@
-"""Process entry point and composition root (spec.md §12, §14). Grows in later steps."""
+"""Process entry point (spec.md §12, §14). Grows in later steps."""
+
+import asyncio
 
 import structlog
 
 from jargonator import __version__
+from jargonator.bootstrap import build_container
 from jargonator.config import Settings
 from jargonator.logging import configure_logging
 
 
+async def run(settings: Settings) -> None:
+    log = structlog.get_logger()
+    container = await build_container(settings)
+    try:
+        log.info("container_ready")
+    finally:
+        await container.aclose()
+
+
 def main() -> None:
-    """Load configuration, set up logging and announce startup."""
+    """Load configuration, set up logging and build the application."""
     settings = Settings()  # values come from the environment / .env
     configure_logging(settings.log_level)
     structlog.get_logger().info("startup", version=__version__)
+    asyncio.run(run(settings))
