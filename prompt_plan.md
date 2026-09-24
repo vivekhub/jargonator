@@ -832,7 +832,7 @@ Final: update DECISIONS.md with anything decided along the way, and confirm all 
 ## Part 4 — Progress checklist
 
 - [x] 1 Scaffold, config, logging
-- [ ] 2 Clock and state machine
+- [x] 2 Clock and state machine
 - [ ] 3 Turn order
 - [ ] 4 Round scoring
 - [ ] 5 Standings and leakage
