@@ -835,7 +835,7 @@ Final: update DECISIONS.md with anything decided along the way, and confirm all 
 - [x] 2 Clock and state machine
 - [x] 3 Turn order
 - [x] 4 Round scoring
-- [ ] 5 Standings and leakage
+- [x] 5 Standings and leakage
 - [ ] 6 DB models, migration, game/player repo, container
 - [ ] 7 Round/guess/turn-order repo
 - [ ] 8 Similarity scorer

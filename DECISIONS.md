@@ -16,3 +16,7 @@ Decisions made during implementation that `spec.md` does not cover.
 | 2026-09-24 | Tie margin comparisons use a 1e-9 tolerance | Otherwise 0.80 vs 0.78 (float difference 0.0200000000000000018) would not count as within a 0.02 margin. |
 | 2026-09-24 | When the tie-break falls back, the whole cluster is ordered by submission time, even if similarities differ slightly within it | This is spec §3.7 step 4 taken literally. Differences within the margin are treated as noise. |
 | 2026-09-24 | Clusters are measured from each cluster's highest member and don't overlap | Follows spec §3.7 step 4. Avoids chains where a 0.80/0.79/0.78/0.77 run would all tie. |
+| 2026-09-24 | `RoundSummary.level` is optional | Skipped rounds never get a level assigned. |
+| 2026-09-24 | The leakage stemmer also strips a trailing "e", and "es" is handled before "s" | Needed so "horse"/"horses" and "like"/"liked"/"liking" match. The prompt's suggested rule set would have mismatched them. |
+| 2026-09-24 | `leaked_words` returns the words as written in the original, not their stems | They go into the stricter jargon prompt ("do not use: cats"), where real words read better than stems like "lik". |
+| 2026-09-24 | The best-guess and most-unhinged highlights go to the earlier round on a tie | Deterministic, and rewards whoever got there first. |
