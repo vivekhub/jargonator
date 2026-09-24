@@ -50,6 +50,7 @@ async def test_create_round_defaults(repo: Repo) -> None:
     assert rnd.started_at == NOW
     assert rnd.level is None and rnd.sentence is None and rnd.jargon is None
     assert rnd.writer_bonus_awarded is False
+    assert rnd.llm_retry_at is None
 
 
 async def test_get_missing_round(repo: Repo) -> None:
@@ -89,6 +90,7 @@ async def test_update_round(repo: Repo) -> None:
         sentence="I have two cats",
         jargon="I steward a dual-feline portfolio",
         guess_deadline=NOW + timedelta(minutes=3),
+        llm_retry_at=NOW + timedelta(seconds=30),
         status_message_ts="111.222",
         writer_bonus_awarded=True,
     )
@@ -96,6 +98,7 @@ async def test_update_round(repo: Repo) -> None:
     assert updated.level is JargonLevel.UNHINGED
     assert updated.sentence == "I have two cats"
     assert updated.guess_deadline == NOW + timedelta(minutes=3)
+    assert updated.llm_retry_at == NOW + timedelta(seconds=30)
     assert updated.status_message_ts == "111.222"
     assert updated.writer_bonus_awarded is True
 
@@ -134,7 +137,7 @@ async def test_add_and_get_guesses(repo: Repo) -> None:
     assert [g.user_id for g in guesses] == ["U3", "U2"]  # submission order
     assert first.text == "I own cats"
     assert first.submitted_at == NOW + timedelta(seconds=5)
-    assert first.similarity is None and first.rank is None and first.points == 0
+    assert first.score is None and first.rank is None and first.points == 0
 
 
 async def test_duplicate_guess_raises(repo: Repo) -> None:
@@ -154,12 +157,12 @@ async def test_save_guess_results(repo: Repo) -> None:
     await repo.save_guess_results(
         round_id,
         [
-            GuessResult(a.id, similarity=0.81, rank=1, points=10, moderated_out=False),
-            GuessResult(b.id, similarity=0.0, rank=None, points=0, moderated_out=True),
+            GuessResult(a.id, score=81, rank=1, points=10, moderated_out=False),
+            GuessResult(b.id, score=0, rank=None, points=0, moderated_out=True),
         ],
     )
     by_user = {g.user_id: g for g in await repo.get_guesses(round_id)}
-    assert (by_user["U2"].similarity, by_user["U2"].rank, by_user["U2"].points) == (0.81, 1, 10)
+    assert (by_user["U2"].score, by_user["U2"].rank, by_user["U2"].points) == (81, 1, 10)
     assert by_user["U2"].moderated_out is False
     assert (by_user["U3"].rank, by_user["U3"].moderated_out) == (None, True)
 
@@ -169,7 +172,7 @@ async def test_save_guess_results_ignores_other_rounds(repo: Repo) -> None:
     r1 = await new_round(repo, game_id, 1)
     r2 = await new_round(repo, game_id, 2)
     g2 = await repo.add_guess(r2, "U2", "x", NOW)
-    await repo.save_guess_results(r1, [GuessResult(g2.id, 0.5, 1, 10, False)])
+    await repo.save_guess_results(r1, [GuessResult(g2.id, 50, 1, 10, False)])
     assert (await repo.get_guesses(r2))[0].points == 0
 
 

@@ -54,6 +54,7 @@ class RoundRecord:
     writer_reminder_at: datetime | None
     guess_deadline: datetime | None
     host_claim_at: datetime | None
+    llm_retry_at: datetime | None
     status_message_ts: str | None
     results_message_ts: str | None
     writer_bonus_awarded: bool
@@ -77,6 +78,6 @@ class GuessRecord:
     text: str
     submitted_at: datetime
     moderated_out: bool
-    similarity: float | None
+    score: int | None
     rank: int | None
     points: int

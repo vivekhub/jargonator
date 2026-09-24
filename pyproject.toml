@@ -16,13 +16,6 @@ dependencies = [
     "structlog>=24.4",
 ]
 
-[project.optional-dependencies]
-embeddings = [
-    "sentence-transformers>=3.0",
-    # Listed explicitly so uv can pull the CPU-only build (see [tool.uv.sources]).
-    "torch>=2.4",
-]
-
 [project.scripts]
 jargonator = "jargonator.main:main"
 
@@ -35,14 +28,6 @@ dev = [
     "mypy>=1.11",
 ]
 
-[tool.uv.sources]
-torch = [{ index = "pytorch-cpu" }]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -54,11 +39,7 @@ packages = ["src/jargonator"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = "-m 'not slow'"
-markers = [
-    "slow: needs heavy optional dependencies (e.g. the real embedding model)",
-    "integration: multi-component tests",
-]
+markers = ["integration: multi-component tests"]
 
 [tool.ruff]
 line-length = 100

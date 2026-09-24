@@ -8,7 +8,6 @@ from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
-    Float,
     ForeignKey,
     Index,
     Integer,
@@ -105,6 +104,7 @@ class Round(Base):
     writer_reminder_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     guess_deadline: Mapped[datetime | None] = mapped_column(UTCDateTime)
     host_claim_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    llm_retry_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     status_message_ts: Mapped[str | None] = mapped_column(SLACK_ID)
     results_message_ts: Mapped[str | None] = mapped_column(SLACK_ID)
     writer_bonus_awarded: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -133,6 +133,7 @@ class Guess(Base):
     text: Mapped[str] = mapped_column(Text)
     submitted_at: Mapped[datetime] = mapped_column(UTCDateTime)
     moderated_out: Mapped[bool] = mapped_column(Boolean, default=False)
-    similarity: Mapped[float | None] = mapped_column(Float)
+    score: Mapped[int | None] = mapped_column(Integer)
+    """The LLM judge's 0-100 rating (spec §7.4). None until judged."""
     rank: Mapped[int | None] = mapped_column(Integer)
     points: Mapped[int] = mapped_column(Integer, default=0)

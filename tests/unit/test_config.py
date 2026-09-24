@@ -14,17 +14,16 @@ def test_defaults_match_spec(required_env: dict[str, str]) -> None:
     assert s.slack_app_token.get_secret_value() == "xapp-test"
     assert s.openrouter_api_key.get_secret_value() == "sk-or-test"
     assert s.llm_model_jargon == "anthropic/claude-sonnet-5"
+    assert s.llm_model_judge == "anthropic/claude-sonnet-5"
     assert s.llm_model_quip == "anthropic/claude-sonnet-5"
     assert s.llm_model_moderation == "anthropic/claude-haiku-4.5"
-    assert s.llm_model_tiebreak == "anthropic/claude-haiku-4.5"
     assert s.llm_model_fallback == "openai/gpt-4o-mini"
     assert s.llm_timeout_seconds == 15
-    assert s.embedding_model == "sentence-transformers/all-MiniLM-L6-v2"
+    assert s.llm_failure_retry_seconds == 30
     assert s.database_url == "sqlite+aiosqlite:////data/jargonator.db"
     assert (s.points_first, s.points_second, s.points_third) == (10, 5, 1)
     assert s.writer_bonus_points == 10
-    assert s.writer_bonus_threshold == 0.5
-    assert s.tie_margin == 0.02
+    assert s.writer_bonus_threshold == 50
     assert s.default_guess_seconds == 60
     assert s.default_writer_seconds == 90
     assert s.default_join_window_seconds == 120
@@ -52,12 +51,12 @@ def test_missing_required_var_raises(
 
 def test_env_overrides(required_env: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("POINTS_FIRST", "20")
-    monkeypatch.setenv("TIE_MARGIN", "0.05")
+    monkeypatch.setenv("WRITER_BONUS_THRESHOLD", "65")
     monkeypatch.setenv("DEFAULT_JOIN_WINDOW_SECONDS", "0")
     monkeypatch.setenv("LLM_MODEL_JARGON", "openai/gpt-5")
     s = make_settings()
     assert s.points_by_rank == (20, 5, 1)
-    assert s.tie_margin == 0.05
+    assert s.writer_bonus_threshold == 65
     assert s.default_join_window_seconds == 0
     assert s.llm_model_jargon == "openai/gpt-5"
 
@@ -65,9 +64,10 @@ def test_env_overrides(required_env: dict[str, str], monkeypatch: pytest.MonkeyP
 @pytest.mark.parametrize(
     ("var", "value"),
     [
-        ("WRITER_BONUS_THRESHOLD", "1.5"),
-        ("WRITER_BONUS_THRESHOLD", "-0.1"),
-        ("TIE_MARGIN", "2"),
+        ("WRITER_BONUS_THRESHOLD", "101"),
+        ("WRITER_BONUS_THRESHOLD", "-1"),
+        ("WRITER_BONUS_THRESHOLD", "0.5"),
+        ("LLM_FAILURE_RETRY_SECONDS", "0"),
         ("DEFAULT_GUESS_SECONDS", "-5"),
         ("DEFAULT_WRITER_SECONDS", "0"),
         ("DEFAULT_JOIN_WINDOW_SECONDS", "-1"),
@@ -86,3 +86,8 @@ def test_invalid_values_rejected(
 
 def test_secrets_not_exposed_in_repr(required_env: dict[str, str]) -> None:
     assert "xoxb-test" not in repr(make_settings())
+
+
+def test_removed_v1_settings_are_gone(required_env: dict[str, str]) -> None:
+    fields = set(Settings.model_fields)
+    assert not {"embedding_model", "tie_margin", "llm_model_tiebreak"} & fields

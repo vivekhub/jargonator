@@ -19,7 +19,7 @@ def r(
     *,
     level: JargonLevel = JargonLevel.SPICY,
     jargon: str | None = "synergy",
-    best: float | None = None,
+    best: int | None = None,
     best_user: str | None = None,
     best_text: str | None = None,
     bonus: bool = False,
@@ -66,11 +66,11 @@ def test_empty_rounds() -> None:
 
 def test_best_guess_across_rounds() -> None:
     rounds = [
-        r("w1", best=0.7, best_user="a", best_text="I have cats"),
-        r("w2", best=0.9, best_user="b", best_text="I ran a marathon"),
-        r("w3", best=0.9, best_user="c", best_text="later tie loses"),
+        r("w1", best=70, best_user="a", best_text="I have cats"),
+        r("w2", best=90, best_user="b", best_text="I ran a marathon"),
+        r("w3", best=90, best_user="c", best_text="later tie loses"),
     ]
-    assert compute_highlights(rounds).best_guess == ("b", "I ran a marathon", 0.9)
+    assert compute_highlights(rounds).best_guess == ("b", "I ran a marathon", 90)
 
 
 def test_most_unhinged_is_longest_unhinged_jargon() -> None:
@@ -108,7 +108,7 @@ def test_only_completed_rounds_count() -> None:
             status=RoundStatus.VOIDED,
             level=JargonLevel.UNHINGED,
             jargon="voided jargon",
-            best=0.99,
+            best=99,
             best_user="x",
             best_text="t",
         ),

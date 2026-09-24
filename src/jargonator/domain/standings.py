@@ -26,7 +26,7 @@ class RoundSummary:
     writer_id: str
     level: JargonLevel | None
     jargon: str | None
-    best_similarity: float | None
+    best_score: int | None
     best_guess_user: str | None
     best_guess_text: str | None
     writer_bonus: bool
@@ -35,8 +35,8 @@ class RoundSummary:
 
 @dataclass(frozen=True)
 class Highlights:
-    best_guess: tuple[str, str, float] | None
-    """(user_id, guess text, similarity)"""
+    best_guess: tuple[str, str, int] | None
+    """(user_id, guess text, judge score 0-100)"""
     most_unhinged: tuple[str, str] | None
     """(writer_id, jargon)"""
     top_stumper: tuple[str, int] | None
@@ -65,12 +65,12 @@ def compute_highlights(rounds: Sequence[RoundSummary]) -> Highlights:
     """Pick the game highlights from completed rounds only. Earlier rounds win ties."""
     completed = [r for r in rounds if r.status is RoundStatus.COMPLETED]
 
-    best_guess: tuple[str, str, float] | None = None
+    best_guess: tuple[str, str, int] | None = None
     for r in completed:
-        if r.best_similarity is None or r.best_guess_user is None or r.best_guess_text is None:
+        if r.best_score is None or r.best_guess_user is None or r.best_guess_text is None:
             continue
-        if best_guess is None or r.best_similarity > best_guess[2]:
-            best_guess = (r.best_guess_user, r.best_guess_text, r.best_similarity)
+        if best_guess is None or r.best_score > best_guess[2]:
+            best_guess = (r.best_guess_user, r.best_guess_text, r.best_score)
 
     most_unhinged: tuple[str, str] | None = None
     for r in completed:

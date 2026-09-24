@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test test-slow check run
+.PHONY: install lint format typecheck test check run
 
 UV ?= uv
 
@@ -18,9 +18,6 @@ typecheck:
 
 test:
 	$(UV) run pytest
-
-test-slow:
-	$(UV) run pytest -m slow
 
 check: lint typecheck test
 

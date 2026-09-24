@@ -1,6 +1,6 @@
 # Jargonator — Slack Corporate Jargon Guessing Game
 
-**Specification v1.0 — 2026-09-24**
+**Specification v1.1 — 2026-09-24** (v1.1: guesses are judged by an LLM, local embeddings removed; essential LLM failures retry once after 30 s, then end the game)
 
 This document is the complete specification for a multiplayer Slack game. It is written to be handed to an LLM (or engineer) to implement end-to-end. Where a behaviour is not specified, choose the simplest option consistent with the rest of this document and record the decision in `DECISIONS.md`.
 
@@ -17,7 +17,7 @@ Players in a Slack channel take turns. On each turn:
 3. The bot sends it to an LLM, which rewrites it as **dense corporate jargon** (e.g. "I steward a dual-asset feline stakeholder portfolio with a focus on low-touch engagement.").
 4. The jargon is **DMed to every other player** (the guessers).
 5. Guessers have **60 seconds** to submit one guess at the original sentence.
-6. The bot ranks guesses by closeness, awards **10 / 5 / 1 points** to the top three, and reveals everything in the channel.
+6. An LLM scores each guess 0–100 for closeness of meaning; the bot ranks them, awards **10 / 5 / 1 points** to the top three, and reveals everything in the channel.
 7. If nobody got close, the **writer earns a 10-point bonus**.
 8. The host clicks **Next round**. The game continues until the host ends it.
 
@@ -33,7 +33,7 @@ Players in a Slack channel take turns. On each turn:
 | **Guesser** | An active player (not the writer) who received the jargon this round. |
 | **Cycle** | One pass through the shuffled turn order. |
 | **Level** | Jargon intensity for a round: `mild`, `spicy`, `unhinged`. |
-| **Similarity** | Cosine similarity (0–1) between the original sentence and a guess, from a local embedding model. |
+| **Score** | The LLM judge's 0–100 rating of how close a guess is in meaning to the original sentence (§8). |
 
 ### 1.3 Non-goals (v1)
 
@@ -52,7 +52,6 @@ Players in a Slack channel take turns. On each turn:
 | Slack framework | `slack_bolt` (async: `AsyncApp` + `AsyncSocketModeHandler`) |
 | Slack connection | **Socket Mode** (no public URL required) |
 | LLM | OpenRouter via the `openai` Python SDK (`base_url="https://openrouter.ai/api/v1"`) |
-| Embeddings | **Local** `sentence-transformers`, default model `sentence-transformers/all-MiniLM-L6-v2`, loaded once at startup, run in a thread executor |
 | Storage | SQLite (file on a Docker volume) via `SQLAlchemy 2.x` async + `aiosqlite`; migrations with `alembic` |
 | Timers | `asyncio` tasks driven by persisted deadlines (see §9) |
 | Config | `pydantic-settings` (env vars / `.env`) |
@@ -61,7 +60,7 @@ Players in a Slack channel take turns. On each turn:
 | Packaging | `uv` (pyproject.toml), Docker image + `docker-compose.yml` |
 | Quality | `pytest`, `pytest-asyncio`, `ruff`, `mypy --strict` |
 
-The embedding model must be **downloaded at Docker build time** (baked into the image) so startup does not depend on network access to Hugging Face.
+Guess judging uses the LLM (§7.4, §8). v1.0 used a local embedding model; it was dropped after testing showed it rewards shared wording over meaning (e.g. "I have two dogs" outscored "I own a pair of kitties" for "I have two cats").
 
 ---
 
@@ -102,7 +101,7 @@ The embedding model must be **downloaded at Docker build time** (baked into the 
 
 - The round's level is chosen **uniformly at random** from `mild | spicy | unhinged`.
 - The LLM generates jargon (§7.3). A **leakage check** runs: if more than 50% of the original's content words (lowercased, stop-words removed, simple stemming) appear in the jargon, regenerate once with a stricter instruction. Use the second result regardless.
-- On LLM failure (after retries and the fallback model, §7.1) the round is **voided**: a public apology, and the writer is placed back at the **front** of the turn order so they write next. The game goes to `AWAITING_NEXT`.
+- On LLM failure (after retries and the fallback model, §7.1) the **essential-LLM failure rule** applies (§3.11).
 
 ### 3.6 Guessing phase
 
@@ -119,13 +118,13 @@ The embedding model must be **downloaded at Docker build time** (baked into the 
 
 Run the following when the guess window closes:
 
-1. **Moderate guesses** in one batched LLM call (§7.2). Flagged guesses are **disqualified**: they score 0, and in the reveal they are shown as "🚫 [hidden by moderation]".
-2. **Embed** the original sentence and all valid guesses with the local model (normalized vectors). Similarity = cosine, clamped to [0, 1], rounded to 4 decimals.
-3. **Sort** by similarity descending.
-4. **Tie-break**: find clusters of adjacent guesses whose similarities are within `TIE_MARGIN` (default **0.02**) of the cluster's top entry, **only where the cluster touches positions 1–3** (i.e. could change who gets points). For each such cluster, call the LLM tie-breaker (§7.4) to order it. If the LLM returns a tie or fails, order by **earliest submission time**.
-5. **Award points**: positions 1, 2, 3 get **10, 5, 1** (configurable via env). There is **no minimum similarity** for guessers: the top 3 always score, even when far off. With fewer than 3 valid guesses, only the available positions score.
-6. **Writer bonus**: if **at least one valid guess exists** and the **best similarity < `WRITER_BONUS_THRESHOLD`** (default **0.5**), the writer earns **`WRITER_BONUS_POINTS`** (default **10**). Guessers still get their 10/5/1 in the same round. If there were zero valid guesses, no bonus (the guessers were absent, not stumped).
-7. In parallel with steps 2–4, generate the **quip** (§7.5). If it fails, omit it.
+1. **Moderate guesses** in one batched LLM call (§7.2). Flagged guesses are **disqualified**: they score 0 points, and in the reveal they are shown as "🚫 [hidden by moderation]".
+2. **Judge** all valid guesses in **one** LLM call (§7.4): each gets an integer **score 0–100** for closeness of meaning to the original sentence, using the rubric in §8. All guesses are judged together so scores are consistent within the round.
+3. **Sort** by score descending. **Exact ties go to the earlier submission.**
+4. **Award points**: positions 1, 2, 3 get **10, 5, 1** (configurable via env). There is **no minimum score** for guessers: the top 3 always score, even when far off. With fewer than 3 valid guesses, only the available positions score.
+5. **Writer bonus**: if **at least one valid guess exists** and the **best score < `WRITER_BONUS_THRESHOLD`** (default **50**), the writer earns **`WRITER_BONUS_POINTS`** (default **10**). Guessers still get their 10/5/1 in the same round. If there were zero valid guesses, no bonus (the guessers were absent, not stumped).
+6. In parallel with step 2, generate the **quip** (§7.5). If it fails, omit it.
+7. If judging fails (after retries and the fallback model, §7.1), the **essential-LLM failure rule** applies (§3.11). With zero valid guesses, judging is skipped entirely.
 
 > **Design note for implementers:** the writer bonus rewards obscure sentences. The moderation prompt (§7.2) must enforce that sentences are **plain, simple, literal statements about the writer** (no riddles, invented words, random strings, or deliberately obscure trivia) to limit abuse.
 
@@ -135,9 +134,9 @@ Post a **Results message** in the channel (Block Kit) containing:
 
 - The level badge and the **jargon**.
 - The **original sentence** and the writer.
-- The **top 3**: medal, player, their guess, similarity as a percentage, and points earned.
+- The **top 3**: medal, player, their guess, score (0–100), and points earned.
 - The **writer bonus** line, if awarded ("🕵️ Nobody cracked it — @writer earns +10").
-- **All other guesses**, each with its similarity %. If there are more than 5, collapse them into the message's thread as a reply to keep the channel tidy. Moderated guesses appear as hidden.
+- **All other guesses**, each with its score. If there are more than 5, collapse them into the message's thread as a reply to keep the channel tidy. Moderated guesses appear as hidden.
 - The LLM **quip** (italic, one line).
 - The **running leaderboard** (all players with points, including `inactive`/`left` players, who are marked).
 - Buttons: **Next round** (host only) and **End game** (host only). After `HOST_CLAIM_AFTER` (default 5 min) with no Next click, a **Claim host** button is added (via `chat.update`) that any active player can click.
@@ -147,9 +146,10 @@ Post a **Results message** in the channel (Block Kit) containing:
 - The game ends when:
   - the host clicks **End game** or runs `/jargonator end`, **or**
   - a workspace admin/owner runs `/jargonator end` in that channel, **or**
-  - it has been **idle for 2 h** (`IDLE_TIMEOUT`, configurable; "idle" = no state transition and no player action).
+  - it has been **idle for 2 h** (`IDLE_TIMEOUT`, configurable; "idle" = no state transition and no player action), **or**
+  - an essential LLM step failed twice (§3.11).
 - Ending during a round voids that round (no points are awarded) and cancels its timers. Guessers who were holding the jargon DM get a notification.
-- The **Final Scoreboard** is posted: ranked players (ties share a rank, standard competition ranking 1,1,3), points, and round wins, plus **game highlights**: best guess (highest similarity), most unhinged jargon (the longest `unhinged` jargon, or the LLM's pick if cheap), and the writer who stumped the table most often. Then the game is marked `ENDED` and all players are freed.
+- The **Final Scoreboard** is posted: ranked players (ties share a rank, standard competition ranking 1,1,3), points, and round wins, plus **game highlights**: best guess (highest score), most unhinged jargon (the longest `unhinged` jargon, or the LLM's pick if cheap), and the writer who stumped the table most often. Then the game is marked `ENDED` and all players are freed.
 
 ### 3.10 Host management
 
@@ -158,6 +158,15 @@ Post a **Results message** in the channel (Block Kit) containing:
 - **Claim host**: available on the results message after 5 minutes without Next round. The first active player to click becomes host (announced).
 - Workspace admins/owners (checked via `users.info` → `is_admin`/`is_owner`) can always `/jargonator end`.
 - A non-host clicking a host-only button gets an ephemeral "Only the host (@host) can do that."
+
+### 3.11 Essential-LLM failure rule
+
+Jargon generation (§3.5) and judging (§3.7) are **essential**: the round cannot continue without them. (Moderation and the quip are not essential and have their own fallbacks, §7.2 and §7.5.)
+
+1. Each attempt already includes the client's quick retries and the fallback model (§7.1).
+2. If an attempt fails, post a notice "⏳ The AI service is having a hiccup — retrying in 30 seconds…", persist `llm_retry_at = now + LLM_FAILURE_RETRY_SECONDS` (default **30**) on the round, and keep the game in its current state (`GENERATING` or `JUDGING`). Guessers keep waiting; no new guesses are accepted while judging.
+3. When the retry timer fires, run the step once more.
+4. If it fails again, **end the game** (§3.9) with `end_reason = "llm_failure"`: post "⚠️ The game can't continue: the AI service isn't responding. Final scores below.", void the current round (no points; if judging failed, still reveal the original sentence and the guesses), and post the final scoreboard.
 
 ---
 
@@ -188,14 +197,14 @@ A single command `/jargonator` with subcommands. Unknown subcommand → help.
                                                                     AWAITING_SENTENCE
                                                      timeout ┌────────┤ submit ok
                                                              ▼        ▼
-                                           (round SKIPPED)  │   GENERATING ── LLM fail ──► (round VOIDED)
-                                                             │        │ ok                         │
-                                                             │        ▼                            │
-                                                             │    GUESSING ── deadline / all in    │
-                                                             │        ▼                            │
-                                                             │    JUDGING                          │
-                                                             │        ▼                            │
-                                                             └──► AWAITING_NEXT ◄──────────────────┘
+                                           (round SKIPPED)  │   GENERATING ── LLM fails twice ──► ENDED
+                                                             │        │ ok
+                                                             │        ▼
+                                                             │    GUESSING ── deadline / all in
+                                                             │        ▼
+                                                             │    JUDGING ── LLM fails twice ──► ENDED
+                                                             │        ▼
+                                                             └──► AWAITING_NEXT
                                                                       │ Next round
                                            players<2 ◄────────────────┤
                                      PAUSED_PLAYERS ── ≥2 & Next ─────┘──► AWAITING_SENTENCE
@@ -206,6 +215,7 @@ A single command `/jargonator` with subcommands. Unknown subcommand → help.
 - **Round statuses:** `awaiting_sentence`, `generating`, `guessing`, `judging`, `completed`, `skipped`, `voided`.
 - All transitions go through one `GameEngine` method per event, guarded by a **per-game `asyncio.Lock`**, and validate the current state (an invalid event → no-op + debug log). This makes duplicate button clicks and racing timers safe.
 - On Next round: if active players < 2 → `PAUSED_PLAYERS`, otherwise pick the next writer → `AWAITING_SENTENCE`.
+- A first essential-LLM failure does not change state; the game waits in `GENERATING`/`JUDGING` for the 30 s retry (§3.11). A second failure is an `END` event.
 
 ---
 
@@ -222,7 +232,7 @@ A single command `/jargonator` with subcommands. Unknown subcommand → help.
 | M5 Guess prompt | DM to each guesser | Level badge, jargon in a quote block, deadline, **Submit guess** button. After submission it is updated to show "✅ Your guess: …". After the round, updated to link to the results. |
 | M6 Results | channel | Per §3.8. |
 | M7 Final scoreboard | channel | Per §3.9. |
-| M8 Notices | channel | Skipped / voided / host change / paused / player joined or left (short, context-block style). |
+| M8 Notices | channel | Skipped / voided / host change / paused / player joined or left / LLM retry / LLM failure end (short, context-block style). |
 
 ### 6.2 Modals
 
@@ -253,7 +263,7 @@ A single command `/jargonator` with subcommands. Unknown subcommand → help.
 ### 7.1 Client and resilience
 
 - OpenAI SDK with `base_url` `https://openrouter.ai/api/v1`, and headers `HTTP-Referer` and `X-Title: Jargonator`.
-- **Per-task models** (env): `LLM_MODEL_JARGON`, `LLM_MODEL_QUIP` (default `anthropic/claude-sonnet-5`), `LLM_MODEL_MODERATION`, `LLM_MODEL_TIEBREAK` (default `anthropic/claude-haiku-4.5`), and `LLM_MODEL_FALLBACK` (used for any task when the primary fails).
+- **Per-task models** (env): `LLM_MODEL_JARGON`, `LLM_MODEL_JUDGE`, `LLM_MODEL_QUIP` (default `anthropic/claude-sonnet-5`), `LLM_MODEL_MODERATION` (default `anthropic/claude-haiku-4.5`), and `LLM_MODEL_FALLBACK` (used for any task when the primary fails). The judge defaults to the stronger model because fair scoring is the core of the game.
 - Timeouts: 15 s per call. Retries: 2 with exponential backoff (0.5 s, 1.5 s) on timeouts/5xx/429, then one attempt on the fallback model.
 - All structured tasks request JSON (`response_format={"type":"json_object"}`) and are **validated with Pydantic**. A parse failure counts as a failed attempt.
 - Log model, latency, and token usage per call. **Never log full user sentences at INFO**, only at DEBUG.
@@ -289,9 +299,16 @@ Output: `{"jargon": "…"}`. The system prompt establishes a "Chief Synergy Offi
 - Stricter retry (leakage, §3.5): add "Your previous attempt reused these words: [list]. Do not use them or their synonyms."
 - Temperature: 0.9.
 
-### 7.4 Tie-breaker
+### 7.4 Judge
 
-Input: the original sentence and a cluster of `{id, guess}`. Output: `{"order": ["id", …], "tie": false}`, where `order` is closest-in-meaning first. If `tie` is true or the ids are invalid/incomplete → fall back to submission time. Temperature: 0.
+Input: the original sentence, the jargon (for context), and all valid guesses as `<guess id="…">…</guess>`. Output:
+```json
+{"scores": [{"id": "g1", "score": 85}, {"id": "g2", "score": 20}]}
+```
+- Exactly one entry per input id, integer scores 0–100, following the rubric in §8. Anything else (missing/extra/duplicate ids, out-of-range or non-integer scores) counts as a failed attempt.
+- Judge **meaning**, not wording: paraphrases and synonyms ("kitties" for "cats") score as high as exact matches; guesses that share words but change the meaning ("two dogs" for "two cats") score low.
+- Ignore spelling, grammar, case and punctuation.
+- Temperature: 0.
 
 ### 7.5 Quip
 
@@ -299,25 +316,30 @@ Input: the original, the jargon, the top guesses, and whether the writer bonus w
 
 ---
 
-## 8. Embedding Similarity
+## 8. Judge Scoring Rubric
 
-- Load `EMBEDDING_MODEL` (default `sentence-transformers/all-MiniLM-L6-v2`) once at startup. Readiness (`/healthz`) waits for it to load.
-- Encode with `normalize_embeddings=True` in `loop.run_in_executor` (a single-worker thread pool) so the event loop never blocks.
-- Pre-processing: trim, collapse whitespace. Keep case and punctuation (the model handles them).
-- `similarity = max(0.0, dot(orig, guess))`, rounded to 4 decimals.
-- Encapsulate it behind a `SimilarityScorer` protocol (`async score(original: str, guesses: list[str]) -> list[float]`) so tests can inject a deterministic fake and the model can be swapped later.
-- Calibration note: with MiniLM, paraphrases typically score 0.7–0.9, topically related sentences 0.4–0.6, and unrelated ones < 0.2. The default writer-bonus threshold of 0.5 assumes this model. Document that the threshold must be re-tuned if `EMBEDDING_MODEL` changes.
+The judge prompt (§7.4) includes this rubric verbatim:
+
+| Score | Meaning |
+|---|---|
+| 90–100 | Same meaning; any wording, synonyms or paraphrase ("I own a pair of kitties" for "I have two cats"). |
+| 70–89 | Main idea right, a minor detail wrong or missing ("I have a cat"). |
+| 40–69 | Partially right: correct topic or half the facts ("I own pets"). |
+| 10–39 | Mostly wrong, loosely related ("I like animals", "I have two dogs"). |
+| 0–9 | Unrelated. |
+
+The writer-bonus threshold (`WRITER_BONUS_THRESHOLD`, default 50) sits in the "partially right" band: "nobody cracked it" means no guess got the main idea.
 
 ---
 
 ## 9. Timers and Restart Safety
 
-- Each timed event stores an absolute UTC **deadline** in the DB: `writer_deadline`, `writer_reminder_at`, `guess_deadline`, `lobby_deadline`, `host_claim_at`, `idle_deadline`.
+- Each timed event stores an absolute UTC **deadline** in the DB: `writer_deadline`, `writer_reminder_at`, `guess_deadline`, `llm_retry_at`, `lobby_deadline`, `host_claim_at`, `idle_deadline`.
 - A `TimerService` schedules one `asyncio` task per pending deadline. When it fires, it calls the engine event (e.g. `on_writer_timeout(game_id, round_id)`). The engine re-checks state and the round id, so stale timers are harmless no-ops.
 - **On startup**, load all non-`ENDED` games and:
   - reschedule every future deadline;
   - for deadlines already passed, fire the event immediately (e.g. a guess window that expired during downtime → judge with the guesses received);
-  - for a game stuck in `GENERATING` or `JUDGING` (crash mid-call), re-run that step.
+  - for a game stuck in `GENERATING` or `JUDGING` (crash mid-call), re-run that step; if `llm_retry_at` is set, this is the second (final) attempt.
 - `idle_deadline` is bumped on every state transition and player action.
 
 ---
@@ -329,7 +351,8 @@ games
   id (pk, uuid) | channel_id | host_user_id | state | created_by
   guess_seconds | writer_seconds | join_window_seconds
   lobby_message_ts | created_at | started_at | ended_at | end_reason
-  lobby_deadline | idle_deadline | last_activity_at
+  lobby_deadline | idle_deadline | last_activity_at | last_writer
+  end_reason: host | admin | idle | llm_failure
   UNIQUE partial index: (channel_id) WHERE state != 'ENDED'
 
 players
@@ -343,7 +366,7 @@ turn_order
 rounds
   id (pk) | game_id | number | writer_user_id | status | level
   sentence | jargon | quip
-  writer_deadline | writer_reminder_at | guess_deadline | host_claim_at
+  writer_deadline | writer_reminder_at | guess_deadline | host_claim_at | llm_retry_at
   status_message_ts | results_message_ts
   writer_bonus_awarded (bool) | started_at | ended_at
 
@@ -352,7 +375,7 @@ round_guessers            -- who received the jargon
 
 guesses
   id (pk) | round_id | user_id | text | submitted_at
-  moderated_out (bool) | similarity | rank | points
+  moderated_out (bool) | score (0–100) | rank | points
   UNIQUE (round_id, user_id)
 ```
 
@@ -370,17 +393,16 @@ guesses
 | `SLACK_APP_TOKEN` | — | required, Socket Mode |
 | `OPENROUTER_API_KEY` | — | required |
 | `LLM_MODEL_JARGON` | `anthropic/claude-sonnet-5` | |
+| `LLM_MODEL_JUDGE` | `anthropic/claude-sonnet-5` | |
 | `LLM_MODEL_QUIP` | `anthropic/claude-sonnet-5` | |
 | `LLM_MODEL_MODERATION` | `anthropic/claude-haiku-4.5` | |
-| `LLM_MODEL_TIEBREAK` | `anthropic/claude-haiku-4.5` | |
 | `LLM_MODEL_FALLBACK` | `openai/gpt-4o-mini` | any cheap reliable model |
 | `LLM_TIMEOUT_SECONDS` | 15 | |
-| `EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | baked into the image |
+| `LLM_FAILURE_RETRY_SECONDS` | 30 | wait before the one retry of an essential LLM step (§3.11) |
 | `DATABASE_URL` | `sqlite+aiosqlite:////data/jargonator.db` | |
 | `POINTS_FIRST/SECOND/THIRD` | 10 / 5 / 1 | |
 | `WRITER_BONUS_POINTS` | 10 | |
-| `WRITER_BONUS_THRESHOLD` | 0.5 | similarity |
-| `TIE_MARGIN` | 0.02 | |
+| `WRITER_BONUS_THRESHOLD` | 50 | judge score (0–100) |
 | `DEFAULT_GUESS_SECONDS` | 60 | Start-modal default |
 | `DEFAULT_WRITER_SECONDS` | 90 | Start-modal default |
 | `DEFAULT_JOIN_WINDOW_SECONDS` | 120 | Start-modal default |
@@ -401,7 +423,7 @@ jargonator/
   pyproject.toml  uv.lock  Dockerfile  docker-compose.yml  .env.example
   slack-manifest.yaml  README.md  DECISIONS.md  alembic.ini  migrations/
   src/jargonator/
-    main.py                 # wiring: config, DB, scorer, LLM, Bolt app, timers, health server
+    main.py                 # wiring: config, DB, LLM, Bolt app, timers, health server
     config.py               # pydantic-settings
     logging.py
     health.py
@@ -409,20 +431,19 @@ jargonator/
     domain/                 # pure logic, no Slack/LLM imports
       state.py              # enums, transition table
       turn_order.py
-      scoring.py            # ranking, tie clusters, points, writer bonus
+      scoring.py            # ranking, points, writer bonus
       text.py               # leakage check (content words, stemming)
     engine/game_engine.py   # event handlers, per-game locks, orchestration
     engine/timers.py
     llm/client.py  llm/prompts.py  llm/schemas.py  llm/tasks.py
-    similarity/scorer.py    # SimilarityScorer protocol + SentenceTransformerScorer
     slack/app.py  slack/commands.py  slack/actions.py  slack/views.py
     slack/blocks.py         # all Block Kit builders (pure functions)
     slack/gateway.py        # SlackGateway protocol wrapping client calls (fakeable)
   tests/
-    unit/  integration/  fakes/ (FakeSlackGateway, FakeLLM, FakeScorer, FakeClock)
+    unit/  integration/  fakes/ (FakeSlackGateway, FakeLLM, FakeClock)
 ```
 
-**Architecture rule:** `domain/` is pure and synchronous. `engine/` depends only on the protocols (`SlackGateway`, `LLMTasks`, `SimilarityScorer`, `Clock`, `Repo`), never on concrete Slack/OpenRouter classes. This makes the full game playable in tests without network access.
+**Architecture rule:** `domain/` is pure and synchronous. `engine/` depends only on the protocols (`SlackGateway`, `LLMTasks`, `Clock`, `Repo`, `Scheduler`), never on concrete Slack/OpenRouter classes. This makes the full game playable in tests without network access.
 
 ---
 
@@ -430,19 +451,20 @@ jargonator/
 
 **Unit (pytest):**
 - Turn order: shuffle/cycle, no immediate repeat across cycles, skipping inactive/left players, mid-cycle joiners appended, a voided writer re-queued at the front.
-- Scoring: ranking, 10/5/1 assignment, fewer than 3 guesses, moderated guesses excluded, tie clusters only when touching the top 3, the fallback to submission time, writer bonus at/around the threshold (0.4999 vs 0.5), no bonus with zero valid guesses.
+- Scoring: ranking, 10/5/1 assignment, fewer than 3 guesses, moderated guesses excluded, exact ties going to the earlier submission, writer bonus at/around the threshold (49 vs 50), no bonus with zero valid guesses.
 - State machine: every valid transition, invalid events are no-ops, duplicate events are idempotent.
 - Leakage check.
-- LLM schema validation and fallback behaviour (FakeLLM returning bad JSON, timeouts).
+- LLM schema validation and fallback behaviour (FakeLLM returning bad JSON, timeouts); judge output validation (missing/extra ids, out-of-range scores).
 - Block builders: snapshot tests of the key messages (results, final board, lobby).
 
-**Integration (fake Slack + fake LLM + fake scorer + fake clock):**
+**Integration (fake Slack + fake LLM + fake clock):**
 - A full game: start → 3 players join → round with all guessing (early end) → results → next → writer timeout (skip) → next → end → final board.
 - Restart recovery: persist mid-`GUESSING`, rebuild the engine from the DB, advance the clock past the deadline → judging happens exactly once.
 - Race safety: simultaneous guess submissions and timer expiry → consistent state, each guess counted once.
 - Host transfer on leave, and Claim host after the timeout.
 - One-game-per-player and one-game-per-channel enforcement.
 - 3 consecutive misses → inactive → rejoin keeps the score.
+- Essential-LLM failure: first failure posts the retry notice and retries after 30 s (success continues the round); a second failure ends the game with the final scoreboard. Also across a restart during the 30 s wait.
 
 **Quality gates:** `ruff check`, `ruff format --check`, `mypy --strict src/`, and `pytest` with ≥ 85% line coverage on `domain/` and `engine/`. Provide a `Makefile` or `uv run` scripts: `lint`, `typecheck`, `test`, `run`.
 
@@ -450,8 +472,8 @@ jargonator/
 
 ## 14. Operations
 
-- **Docker:** a multi-stage build. The final image runs as a non-root user and includes the pre-downloaded embedding model. `docker-compose.yml` mounts `./data:/data` and loads `.env`.
-- **Health:** `GET /healthz` returns 200 `{"status":"ok","socket":"connected","db":"ok","embeddings":"loaded"}`, or 503 if any check fails. Docker `HEALTHCHECK` uses it.
+- **Docker:** a multi-stage build. The final image runs as a non-root user. `docker-compose.yml` mounts `./data:/data` and loads `.env`.
+- **Health:** `GET /healthz` returns 200 `{"status":"ok","socket":"connected","db":"ok"}`, or 503 if any check fails. Docker `HEALTHCHECK` uses it.
 - **Logging:** JSON lines with `game_id`, `round_id`, `channel_id`, `user_id`, and `event`. No sentences or guesses at INFO level. No tokens ever.
 - **Graceful shutdown:** on SIGTERM, stop accepting events, cancel timer tasks (deadlines are already persisted), close the DB, and exit.
 - **README:** creating the Slack app from the manifest, obtaining the tokens, the OpenRouter key, `docker compose up`, inviting the bot to a channel, playing a game, a configuration reference, and troubleshooting.
@@ -463,12 +485,12 @@ jargonator/
 1. In a channel with the bot, `/jargonator start` → modal → lobby with Join. Two or more players join, and the host clicks Start.
 2. The writer is announced publicly and gets a DM prompt. After they submit a plain sentence, every other player receives the jargon (with level) by DM within ~10 s. The jargon never appears in the channel before the results.
 3. Guessers each submit one final guess. The round ends at 60 s or immediately when all have guessed.
-4. Results in the channel show the original, the jargon, the top 3 with 10/5/1 points, the other guesses, the quip, the writer bonus (when the best similarity < 0.5), and the leaderboard.
+4. Results in the channel show the original, the jargon, the top 3 with 10/5/1 points, the other guesses with their 0–100 scores, the quip, the writer bonus (when the best score < 50), and the leaderboard.
 5. Only the host can click Next round or End. Claim host appears after 5 minutes of inactivity. Host passes automatically if the host leaves.
 6. Writer timeouts skip the turn. 3 in a row makes the player inactive.
 7. Offensive or non-conforming sentences are rejected privately with a reason. Offensive guesses are hidden in the reveal.
 8. Killing and restarting the container mid-round resumes the game correctly.
-9. The game ends via End, admin `/jargonator end`, or 2 h idle, and posts the final scoreboard. The channel and players are freed.
+9. The game ends via End, admin `/jargonator end`, 2 h idle, or a repeated essential-LLM failure (after one 30 s retry), and posts the final scoreboard. The channel and players are freed.
 10. All quality gates in §13 pass.
 
 ---
@@ -481,10 +503,11 @@ jargonator/
 | Game length | Open-ended, until the host ends it (+ 2 h idle auto-end) |
 | Turn order | Shuffled round-robin, reshuffled per cycle |
 | Min players | 2 |
-| Judging | Hybrid: local embeddings rank, LLM breaks near-ties, LLM quip |
+| Judging | LLM judge scores every guess 0–100 on meaning (v1.1; local embeddings dropped after testing) |
 | Threshold for guessers | None; top 3 always score |
-| Ties | LLM tie-break, then earliest submission |
-| Writer reward | +10 if the best similarity < 0.5 |
+| Ties | Exact score ties go to the earlier submission |
+| Writer reward | +10 if the best score < 50 |
+| LLM failure | Essential steps (jargon, judging) retry once after 30 s, then the game ends with the final scoreboard |
 | Writer AFK | 90 s, reminder at 30 s, skip; 3 misses → inactive |
 | Guessing | One final guess, early end when all are in |
 | Visibility | Jargon only via DM; channel shows status and results |
@@ -494,7 +517,6 @@ jargonator/
 | Jargon level | Random per round, level shown, same points |
 | Moderation | LLM pre-check on sentences (rewrite) and guesses (hide) |
 | Stack | Python + Slack Bolt (async), Socket Mode, Docker, SQLite |
-| Embeddings | Local sentence-transformers (all-MiniLM-L6-v2) |
 | LLM models | Per-task configurable + fallback, via OpenRouter |
 | Leaderboard | Per game only |
 | Per-game settings | Start modal: guess time, writer time, join window |

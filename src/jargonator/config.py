@@ -6,7 +6,7 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PositiveInt = Annotated[int, Field(gt=0)]
-Fraction = Annotated[float, Field(ge=0.0, le=1.0)]
+JudgeScore = Annotated[int, Field(ge=0, le=100)]
 
 
 class Settings(BaseSettings):
@@ -21,25 +21,24 @@ class Settings(BaseSettings):
 
     # LLM (spec §7.1)
     llm_model_jargon: str = "anthropic/claude-sonnet-5"
+    llm_model_judge: str = "anthropic/claude-sonnet-5"
     llm_model_quip: str = "anthropic/claude-sonnet-5"
     llm_model_moderation: str = "anthropic/claude-haiku-4.5"
-    llm_model_tiebreak: str = "anthropic/claude-haiku-4.5"
     llm_model_fallback: str = "openai/gpt-4o-mini"
     llm_timeout_seconds: PositiveInt = 15
-
-    # Similarity (spec §8)
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    llm_failure_retry_seconds: PositiveInt = 30
+    """Wait before the single retry of an essential LLM step (spec §3.11)."""
 
     # Storage (spec §10)
     database_url: str = "sqlite+aiosqlite:////data/jargonator.db"
 
-    # Scoring (spec §3.7)
+    # Scoring (spec §3.7, §8)
     points_first: PositiveInt = 10
     points_second: PositiveInt = 5
     points_third: PositiveInt = 1
     writer_bonus_points: PositiveInt = 10
-    writer_bonus_threshold: Fraction = 0.5
-    tie_margin: Fraction = 0.02
+    writer_bonus_threshold: JudgeScore = 50
+    """The writer earns the bonus when the best judge score (0-100) is below this."""
 
     # Timing (spec §3.1, §3.4, §3.6, §3.9, §3.10)
     default_guess_seconds: PositiveInt = 60

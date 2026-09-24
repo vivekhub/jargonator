@@ -35,7 +35,7 @@ class DuplicateGuessError(Exception):
 
 class GuessResult(NamedTuple):
     guess_id: str
-    similarity: float | None
+    score: int | None
     rank: int | None
     points: int
     moderated_out: bool
@@ -64,6 +64,7 @@ ROUND_UPDATABLE = frozenset(
         "quip",
         "guess_deadline",
         "host_claim_at",
+        "llm_retry_at",
         "status_message_ts",
         "results_message_ts",
         "writer_bonus_awarded",
@@ -202,6 +203,7 @@ def _round_record(r: Round) -> RoundRecord:
         writer_reminder_at=r.writer_reminder_at,
         guess_deadline=r.guess_deadline,
         host_claim_at=r.host_claim_at,
+        llm_retry_at=r.llm_retry_at,
         status_message_ts=r.status_message_ts,
         results_message_ts=r.results_message_ts,
         writer_bonus_awarded=r.writer_bonus_awarded,
@@ -218,7 +220,7 @@ def _guess_record(g: Guess) -> GuessRecord:
         text=g.text,
         submitted_at=g.submitted_at,
         moderated_out=g.moderated_out,
-        similarity=g.similarity,
+        score=g.score,
         rank=g.rank,
         points=g.points,
     )
@@ -520,7 +522,7 @@ class Repo:
                     update(Guess)
                     .where(Guess.id == result.guess_id, Guess.round_id == round_id)
                     .values(
-                        similarity=result.similarity,
+                        score=result.score,
                         rank=result.rank,
                         points=result.points,
                         moderated_out=result.moderated_out,
