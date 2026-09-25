@@ -500,7 +500,7 @@ Goal: complete the path GENERATING → GUESSING, including the essential-LLM fai
 1. blocks.py: `jargon_out(writer_id, guessed: int, total: int, deadline)` (M4; must NOT contain the jargon), `guess_prompt(level, jargon, deadline, round_id)` (M5 with a level badge, the jargon in a quote, and a Submit guess button "submit_guess"), `guess_prompt_submitted(level, jargon, guess)`, and `llm_retry_notice()` ("⏳ The AI service is having a hiccup, retrying in 30 seconds…"). Snapshots. Add a test asserting that jargon_out never includes the jargon text.
 2. GameEngine:
    - After a sentence is accepted (end of submit_sentence), call `_generate_and_distribute(game_id, round_id)` (outside the lock for the LLM call):
-     - level = rng.choice(list(JargonLevel)).
+     - level = domain.levels.level_for_round(round number): 1–3 mild, 4–8 spicy, 9–13 unhinged, then repeat.
      - jargon = llm.generate_jargon(sentence, level). If domain.text.is_leaky(sentence, jargon): call again with avoid_words = leaked_words(...) and use that result.
      - LLMError, first time (round.llm_retry_at is None) → set llm_retry_at = now + LLM_FAILURE_RETRY_SECONDS, post llm_retry_notice, schedule TimerKind.LLM_RETRY; state stays GENERATING. `on_llm_retry(game_id, round_id)` re-runs the step if the round is still generating.
      - LLMError, second time (llm_retry_at already set) → call `_end_for_llm_failure(game_id)`. For now implement it minimally: round voided, post "⚠️ The game can't continue: the AI service isn't responding.", game → ENDED with end_reason "llm_failure", cancel all timers. Prompt 17 upgrades it to post the final scoreboard via end_game.

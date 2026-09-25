@@ -24,6 +24,7 @@ from jargonator.db.repo import (
     RepoProtocol,
     UserInOtherGameError,
 )
+from jargonator.domain.levels import level_for_round
 from jargonator.domain.scoring import GuessInput, ScoringRules, score_round
 from jargonator.domain.standings import PlayerScore, RoundSummary, compute_highlights, rank_players
 from jargonator.domain.state import (
@@ -603,8 +604,8 @@ class GameEngine:
                 return
             _, rnd = live
             level = rnd.level
-            if level is None:  # keep the same level across the 30 s retry and restarts
-                level = self.rng.choice(list(JargonLevel))
+            if level is None:  # saved once, so the retry and restarts reuse it
+                level = level_for_round(rnd.number)
                 await self.repo.update_round(round_id, level=level)
             sentence = rnd.sentence or ""
 

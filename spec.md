@@ -99,7 +99,7 @@ Guess judging uses the LLM (§7.4, §8). v1.0 used a local embedding model; it w
 
 ### 3.5 Jargon generation
 
-- The round's level is chosen **uniformly at random** from `mild | spicy | unhinged`.
+- The round's level follows a **fixed schedule by round number**: rounds 1–3 `mild`, 4–8 `spicy`, 9–13 `unhinged`. The 13-round cycle then repeats (14–16 mild, 17–21 spicy, 22–26 unhinged, …). Round numbers count every round, including skipped ones.
 - The LLM generates jargon (§7.3). A **leakage check** runs: if more than 50% of the original's content words (lowercased, stop-words removed, simple stemming) appear in the jargon, regenerate once with a stricter instruction. Use the second result regardless.
 - On LLM failure (after retries and the fallback model, §7.1) the **essential-LLM failure rule** applies (§3.11).
 
@@ -515,7 +515,7 @@ jargonator/
 | Results | Full reveal + quip + leaderboard |
 | Pacing | The host clicks Next round |
 | Host fallback | Auto-transfer on leave; Claim host after 5 min; admins can end |
-| Jargon level | Random per round, level shown, same points |
+| Jargon level | Scheduled by round: 1–3 mild, 4–8 spicy, 9–13 unhinged, then the cycle repeats. Level shown, same points |
 | Moderation | LLM pre-check on sentences (rewrite) and guesses (hide) |
 | Stack | Python + Slack Bolt (async), Socket Mode, Docker, SQLite |
 | LLM models | Per-task configurable + fallback, via OpenRouter |

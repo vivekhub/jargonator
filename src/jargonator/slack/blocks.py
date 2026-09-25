@@ -466,7 +466,9 @@ def help_text() -> Message:
         "*How to play:* each round one player DMs me a simple sentence about themselves. "
         "I turn it into corporate jargon and DM it to everyone else, who have "
         "60 seconds to guess the original. An AI judge scores each guess 0–100 on meaning: "
-        "the top three get *10 / 5 / 1* points. If nobody gets close, the writer earns *+10*."
+        "the top three get *10 / 5 / 1* points. If nobody gets close, the writer earns *+10*.\n"
+        "The jargon ramps up: rounds 1–3 🌶️ Mild, 4–8 🌶️🌶️ Spicy, 9–13 🌶️🌶️🌶️ Unhinged, "
+        "then it starts over."
     )
     commands = "\n".join(f"`/jargonator {cmd}`: {desc}" for cmd, desc in COMMANDS)
     return "Jargonator help", [

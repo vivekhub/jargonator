@@ -39,11 +39,20 @@ async def test_happy_path_distributes_jargon_to_guessers_only(harness: Harness) 
     assert harness.recorder.when(game.id, TimerKind.GUESS_DEADLINE) == rnd.guess_deadline
 
 
-async def test_level_choice_is_deterministic_for_the_seed(harness: Harness) -> None:
+async def test_level_follows_the_round_schedule(harness: Harness) -> None:
     await harness.started("U1", "U2")
     rnd = await harness.write()
-    call = harness.llm.calls_to("generate_jargon")[0]
-    assert call["level"] is rnd.level
+    assert rnd.level is JargonLevel.MILD  # round 1
+    assert harness.llm.calls_to("generate_jargon")[0]["level"] is JargonLevel.MILD
+    game = await harness.game()
+    await harness.engine.on_guess_deadline(game.id, rnd.id)  # finish round 1
+    for _ in (2, 3):  # rounds 2 and 3: the writer times out
+        await harness.engine.next_round("C1", (await harness.game()).host_user_id)
+        await harness.engine.on_writer_timeout(game.id, (await harness.round()).id)
+    await harness.engine.next_round("C1", (await harness.game()).host_user_id)
+    assert (await harness.round()).number == 4
+    rnd = await harness.write("I ran a marathon")
+    assert rnd.level is JargonLevel.SPICY
 
 
 async def test_leaky_jargon_is_regenerated_with_avoid_words(harness: Harness) -> None:

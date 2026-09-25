@@ -20,8 +20,9 @@ The full specification is in [`spec.md`](spec.md). Implementation decisions are 
 3. The host clicks **Start game** (or the lobby auto-starts after the join window).
 4. Each round:
    - The **writer** gets a DM and submits one simple, true sentence about themselves.
-   - Everyone else gets the jargon by DM (with its level: 🌶️ Mild, 🌶️🌶️ Spicy or
-     🌶️🌶️🌶️ Unhinged) and submits **one** guess.
+   - Everyone else gets the jargon by DM and submits **one** guess. The jargon gets harder
+     as the game goes on: rounds 1–3 are 🌶️ Mild, 4–8 🌶️🌶️ Spicy and 9–13 🌶️🌶️🌶️
+     Unhinged, and then the cycle starts again.
    - Guessing closes after 60 s, or as soon as everyone has guessed. Results appear in the
      channel.
 5. The host clicks **Next round** or **End game**. The game also ends after 2 hours idle.
