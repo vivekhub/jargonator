@@ -15,12 +15,21 @@ import structlog
 
 from jargonator.clock import Clock
 from jargonator.config import Settings
-from jargonator.db.records import GameRecord
+from jargonator.db.records import GameRecord, RoundRecord
 from jargonator.db.repo import ChannelBusyError, RepoProtocol, UserInOtherGameError
-from jargonator.domain.state import GameEvent, GameState, PlayerStatus, RoundStatus, transition
+from jargonator.domain.state import (
+    GameEvent,
+    GameState,
+    JargonLevel,
+    PlayerStatus,
+    RoundStatus,
+    transition,
+)
+from jargonator.domain.text import is_leaky, leaked_words
 from jargonator.domain.turn_order import TurnOrder
 from jargonator.engine.errors import UserFacingError
 from jargonator.engine.scheduler import Scheduler, TimerKind
+from jargonator.llm.client import LLMError
 from jargonator.llm.tasks import LLMTasks
 from jargonator.slack import blocks
 from jargonator.slack.gateway import Block, MessageRef, SlackDeliveryError, SlackGateway
@@ -205,6 +214,7 @@ class GameEngine:
             await self._dm(user_id, *blocks.writer_accepted(sentence))
             await self._touch(game.id)
             log.info("sentence_accepted", game_id=game.id, round_id=round_id)
+        await self._generate_and_distribute(rnd.game_id, round_id)
 
     async def _validate_sentence(
         self, game_id: str, round_id: str, user_id: str, sentence: str
@@ -285,8 +295,149 @@ class GameEngine:
         log.info("round_started", game_id=game.id, round_id=rnd.id, number=rnd.number)
 
     # ===================================================================================
+    # Jargon generation and distribution (spec §3.5, §3.6) + essential-LLM rule (§3.11)
+    # ===================================================================================
+
+    async def _generate_and_distribute(self, game_id: str, round_id: str) -> None:
+        async with self._lock(game_id):
+            live = await self._live_round(game_id, round_id, GameState.GENERATING)
+            if live is None:
+                return
+            _, rnd = live
+            level = rnd.level
+            if level is None:  # keep the same level across the 30 s retry and restarts
+                level = self.rng.choice(list(JargonLevel))
+                await self.repo.update_round(round_id, level=level)
+            sentence = rnd.sentence or ""
+
+        try:
+            jargon = await self.llm.generate_jargon(sentence, level)
+            if is_leaky(sentence, jargon):
+                log.info("jargon_leaky_regenerating", round_id=round_id)
+                jargon = await self.llm.generate_jargon(
+                    sentence, level, avoid_words=leaked_words(sentence, jargon)
+                )
+        except LLMError:
+            log.warning("jargon_generation_failed", game_id=game_id, round_id=round_id)
+            await self._essential_llm_failure(game_id, round_id)
+            return
+
+        close_immediately = False
+        async with self._lock(game_id):
+            live = await self._live_round(game_id, round_id, GameState.GENERATING)
+            if live is None:
+                return  # e.g. the game ended while the LLM was working
+            game, rnd = live
+            now = self.clock.now()
+            deadline = now + timedelta(seconds=game.guess_seconds)
+            await self.repo.update_round(
+                round_id,
+                jargon=jargon,
+                llm_retry_at=None,
+                guess_deadline=deadline,
+                status=RoundStatus.GUESSING,
+            )
+            recipients: list[tuple[str, str]] = []
+            for user_id in await self._active_ids(game_id):
+                if user_id == rnd.writer_user_id:
+                    continue
+                try:
+                    recipients.append((user_id, await self.slack.open_dm(user_id)))
+                except SlackDeliveryError as exc:
+                    log.warning("guesser_unreachable", user_id=user_id, code=exc.code)
+            await self.repo.add_round_guessers(round_id, recipients)
+            for user_id, dm_channel in recipients:
+                ref = await self._post(
+                    dm_channel, *blocks.guess_prompt(rnd.number, level, jargon, deadline, round_id)
+                )
+                if ref is not None:
+                    await self.repo.set_guesser_dm_ts(round_id, user_id, ref.ts)
+            game = await self._transition(game, GameEvent.JARGON_READY)
+            if rnd.status_message_ts is not None:
+                await self._update(
+                    MessageRef(game.channel_id, rnd.status_message_ts),
+                    *blocks.jargon_out(
+                        rnd.number, rnd.writer_user_id, 0, len(recipients), deadline
+                    ),
+                )
+            self.scheduler.schedule(game_id, TimerKind.GUESS_DEADLINE, deadline, round_id)
+            log.info(
+                "jargon_distributed", game_id=game_id, round_id=round_id, guessers=len(recipients)
+            )
+            close_immediately = not recipients
+        if close_immediately:
+            await self._close_guessing(game_id, round_id)
+
+    async def _essential_llm_failure(self, game_id: str, round_id: str) -> None:
+        """First failure: announce and retry in LLM_FAILURE_RETRY_SECONDS. Second: end the
+        game (spec §3.11). The step's state (GENERATING/JUDGING) is kept while waiting."""
+        async with self._lock(game_id):
+            game = await self.repo.get_game(game_id)
+            rnd = await self.repo.get_round(round_id)
+            if (
+                game is None
+                or rnd is None
+                or game.state is GameState.ENDED
+                or rnd.status not in (RoundStatus.GENERATING, RoundStatus.JUDGING)
+            ):
+                return
+            if rnd.llm_retry_at is None:
+                seconds = self.settings.llm_failure_retry_seconds
+                retry_at = self.clock.now() + timedelta(seconds=seconds)
+                await self.repo.update_round(round_id, llm_retry_at=retry_at)
+                await self._post(game.channel_id, *blocks.llm_retry_notice(seconds))
+                self.scheduler.schedule(game_id, TimerKind.LLM_RETRY, retry_at, round_id)
+                log.warning("llm_retry_scheduled", game_id=game_id, round_id=round_id)
+                return
+            await self._end_for_llm_failure(game, round_id)
+
+    async def on_llm_retry(self, game_id: str, round_id: str) -> None:
+        rnd = await self.repo.get_round(round_id)
+        if rnd is None:
+            return
+        if rnd.status is RoundStatus.GENERATING:
+            await self._generate_and_distribute(game_id, round_id)
+
+    async def _end_for_llm_failure(self, game: GameRecord, round_id: str) -> None:
+        """Caller holds the game lock."""
+        log.error("game_ended_llm_failure", game_id=game.id, round_id=round_id)
+        await self.repo.update_round(round_id, status=RoundStatus.VOIDED, ended_at=self.clock.now())
+        await self._post(game.channel_id, *blocks.llm_failure_notice())
+        self.scheduler.cancel_all(game.id)
+        await self.repo.update_game(
+            game.id, state=GameState.ENDED, ended_at=self.clock.now(), end_reason="llm_failure"
+        )
+
+    # ===================================================================================
+    # Guessing (spec §3.6)
+    # ===================================================================================
+
+    async def _close_guessing(self, game_id: str, round_id: str) -> None:
+        async with self._lock(game_id):
+            live = await self._live_round(game_id, round_id, GameState.GUESSING)
+            if live is None:
+                return
+            game, _ = live
+            self.scheduler.cancel(game_id, TimerKind.GUESS_DEADLINE)
+            await self.repo.update_round(round_id, status=RoundStatus.JUDGING)
+            await self._transition(game, GameEvent.GUESSING_CLOSED)
+
+    # ===================================================================================
     # Helpers
     # ===================================================================================
+
+    async def _live_round(
+        self, game_id: str, round_id: str, expected: GameState
+    ) -> tuple[GameRecord, RoundRecord] | None:
+        """The game and round if the game is in ``expected`` state with ``round_id`` as its
+        current round in the matching status. Otherwise ``None`` (stale work, discard it)."""
+        game = await self.repo.get_game(game_id)
+        rnd = await self.repo.get_current_round(game_id)
+        if game is None or rnd is None or rnd.id != round_id or game.state is not expected:
+            return None
+        if rnd.status is not _ROUND_STATUS_FOR[expected]:
+            return None
+        return game, rnd
 
     async def _transition(self, game: GameRecord, event: GameEvent) -> GameRecord:
         new_state = transition(game.state, event)
@@ -390,6 +541,14 @@ class GameEngine:
             await self.slack.update_message(ref, text, message_blocks)
         except SlackDeliveryError as exc:
             log.warning("slack_update_failed", channel_id=ref.channel, code=exc.code)
+
+
+_ROUND_STATUS_FOR = {
+    GameState.AWAITING_SENTENCE: RoundStatus.AWAITING_SENTENCE,
+    GameState.GENERATING: RoundStatus.GENERATING,
+    GameState.GUESSING: RoundStatus.GUESSING,
+    GameState.JUDGING: RoundStatus.JUDGING,
+}
 
 
 class _AlreadySubmitted(UserFacingError):

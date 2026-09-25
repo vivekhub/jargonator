@@ -69,3 +69,9 @@ Decisions made during implementation that `spec.md` does not cover.
 | 2026-09-25 | A duplicate Join tells the user "You're already in this game 👍" and changes nothing | Idempotent, with friendly feedback. |
 | 2026-09-25 | "@user joined" notices are posted only after the game starts. In the lobby, the live player list is enough | Less channel noise. |
 | 2026-09-25 | Engine Slack calls go through `_post`/`_update`, which log and swallow `SlackDeliveryError` (except creating the lobby) | A failed Slack post must never leave game state half-changed. |
+| 2026-09-25 | All player text shown in Slack (sentences, jargon, guesses) goes through `blocks.escape` (`&`, `<`, `>`) | Otherwise a guess like `<!channel>` would ping the whole channel. Found while building Prompt 14. |
+| 2026-09-25 | A player who joins while jargon is being generated *does* receive it. Only joiners after distribution sit out the round | Spec §3.6 defines guessers as the active players "at the moment of sending". The prompt plan's test said otherwise, and the spec wins. |
+| 2026-09-25 | The round's jargon level is chosen once and saved before calling the LLM | The 30 s retry (and a restart) reuses the same level, so the channel doesn't see the level change. |
+| 2026-09-25 | `llm_retry_at` is cleared after every successful essential step | Otherwise a jargon retry that succeeded would make the first judging failure end the game immediately. |
+| 2026-09-25 | A guesser whose DM can't be opened is left out of the round | They could never receive the jargon or guess, and waiting on them would block early end. |
+| 2026-09-25 | A double sentence submit after the first was accepted is ignored silently | A double-click on the modal shouldn't produce a confusing error. |

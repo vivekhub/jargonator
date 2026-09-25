@@ -1,0 +1,53 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "text": "🕵️ *Round 2: what did they actually say?*",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "text": "*Level:* 🌶️🌶️ Spicy",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
+    },
+    {
+      "text": {
+        "text": "> I steward a dual-asset feline stakeholder portfolio.",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "action_id": "jargonator_submit_guess",
+          "style": "primary",
+          "text": {
+            "emoji": true,
+            "text": "Submit guess",
+            "type": "plain_text"
+          },
+          "type": "button",
+          "value": "round-9"
+        }
+      ],
+      "type": "actions"
+    },
+    {
+      "elements": [
+        {
+          "text": "⏱️ One guess, closes <!date^1772445780^{time_secs}|10:03:00 UTC>",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
+    }
+  ],
+  "text": "🕵️ Round 2: decode this corporate jargon!"
+}

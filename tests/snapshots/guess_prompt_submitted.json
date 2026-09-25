@@ -1,0 +1,35 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "text": "🕵️ *Round 2*",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "text": "*Level:* 🌶️🌶️🌶️ Unhinged",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
+    },
+    {
+      "text": {
+        "text": "> I steward a dual-asset feline stakeholder portfolio.",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "text": {
+        "text": "✅ *Your guess:* I have &lt;cats&gt;",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    }
+  ],
+  "text": "✅ Round 2: your guess is in."
+}

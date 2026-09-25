@@ -1,0 +1,21 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "text": "📨 *Round 2*: <@U2>'s jargon is out. Guessers, check your DMs!",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "text": "🗳️ *1/3 guessed* · closes <!date^1772445780^{time_secs}|10:03:00 UTC>",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
+    }
+  ],
+  "text": "📨 Round 2: <@U2>'s jargon is out. Guessers, check your DMs! (1/3 guessed)"
+}

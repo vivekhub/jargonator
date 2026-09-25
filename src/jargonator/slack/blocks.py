@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from datetime import datetime
 
 from jargonator.db.records import GameRecord, PlayerRecord
-from jargonator.domain.state import PlayerStatus
+from jargonator.domain.state import JargonLevel, PlayerStatus
 from jargonator.slack import ids
 from jargonator.slack.gateway import Block
 
@@ -18,6 +18,18 @@ _STATUS_SUFFIX = {
     PlayerStatus.INACTIVE: " — inactive",
     PlayerStatus.LEFT: " — left",
 }
+
+
+LEVEL_BADGES = {
+    JargonLevel.MILD: "🌶️ Mild",
+    JargonLevel.SPICY: "🌶️🌶️ Spicy",
+    JargonLevel.UNHINGED: "🌶️🌶️🌶️ Unhinged",
+}
+
+
+def escape(text: str) -> str:
+    """Escape player text for Slack mrkdwn, so ``<!channel>`` or ``<@U1>`` can't ping."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def plural(count: int, noun: str) -> str:
@@ -135,8 +147,76 @@ def writer_reminder(seconds_left: int, round_id: str) -> Message:
 
 
 def writer_accepted(sentence: str) -> Message:
-    text = f"✅ Got it: “{sentence}”. Turning it into jargon…"
+    text = f"✅ Got it: “{escape(sentence)}”. Turning it into jargon…"
     return text, [_section(text)]
+
+
+# --- guessing (M4, M5) ------------------------------------------------------------------------
+
+
+def jargon_out(
+    round_no: int, writer_id: str, guessed: int, total: int, deadline: datetime
+) -> Message:
+    """M4: replaces M2 once the jargon is out. Never shows the jargon itself."""
+    text = (
+        f"📨 Round {round_no}: {mention(writer_id)}'s jargon is out. "
+        f"Guessers, check your DMs! ({guessed}/{total} guessed)"
+    )
+    return text, [
+        _section(
+            f"📨 *Round {round_no}*: {mention(writer_id)}'s jargon is out. "
+            "Guessers, check your DMs!"
+        ),
+        _context(f"🗳️ *{guessed}/{total} guessed* · closes {deadline_text(deadline)}"),
+    ]
+
+
+def guessing_closed(round_no: int, writer_id: str, guessed: int, total: int) -> Message:
+    text = f"⚖️ Round {round_no}: guessing closed ({guessed}/{total} guessed). Judging…"
+    return text, [
+        _section(f"⚖️ *Round {round_no}*: guessing closed. Judging…"),
+        _context(f"🗳️ {guessed}/{total} guessed · jargon by {mention(writer_id)}"),
+    ]
+
+
+def _jargon_quote(level: JargonLevel, jargon: str) -> list[Block]:
+    return [
+        _context(f"*Level:* {LEVEL_BADGES[level]}"),
+        _section(f"> {escape(jargon)}"),
+    ]
+
+
+def guess_prompt(
+    round_no: int, level: JargonLevel, jargon: str, deadline: datetime, round_id: str
+) -> Message:
+    """M5: the jargon, DMed to each guesser, with a Submit guess button."""
+    text = f"🕵️ Round {round_no}: decode this corporate jargon!"
+    return text, [
+        _section(f"🕵️ *Round {round_no}: what did they actually say?*"),
+        *_jargon_quote(level, jargon),
+        {
+            "type": "actions",
+            "elements": [_button("Submit guess", ids.SUBMIT_GUESS, round_id, style="primary")],
+        },
+        _context(f"⏱️ One guess, closes {deadline_text(deadline)}"),
+    ]
+
+
+def guess_prompt_submitted(round_no: int, level: JargonLevel, jargon: str, guess: str) -> Message:
+    text = f"✅ Round {round_no}: your guess is in."
+    return text, [
+        _section(f"🕵️ *Round {round_no}*"),
+        *_jargon_quote(level, jargon),
+        _section(f"✅ *Your guess:* {escape(guess)}"),
+    ]
+
+
+def llm_retry_notice(seconds: int) -> Message:
+    return notice(f"⏳ The AI service is having a hiccup, retrying in {seconds} seconds…")
+
+
+def llm_failure_notice() -> Message:
+    return notice("⚠️ The game can't continue: the AI service isn't responding. Final scores below.")
 
 
 def notice(text: str) -> Message:

@@ -107,6 +107,22 @@ class Harness:
             await self.engine.join(self.channel, user)
         return game
 
+    async def started(self, *users: str) -> RoundRecord:
+        """Lobby with ``users`` (first is host), started: round 1 awaiting the writer."""
+        await self.lobby_with(*users)
+        await self.engine.start_game(self.channel, users[0])
+        return await self.round()
+
+    async def write(self, sentence: str = "I have two cats") -> RoundRecord:
+        """The current writer submits ``sentence`` (and generation runs)."""
+        rnd = await self.round()
+        await self.engine.submit_sentence(rnd.writer_user_id, rnd.id, sentence)
+        return await self.round()
+
+    async def guessers(self) -> list[str]:
+        rnd = await self.round()
+        return [g.user_id for g in await self.repo.get_round_guessers(rnd.id)]
+
     async def aclose(self) -> None:
         await self.db_engine.dispose()
 
