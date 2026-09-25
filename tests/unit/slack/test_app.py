@@ -33,3 +33,24 @@ async def test_slash_command_reaches_the_engine(required_env: dict[str, str]) ->
     response = await app.async_dispatch(AsyncBoltRequest(body=body, mode="socket_mode"))
     assert response.status == 200
     engine.join.assert_awaited_once_with("C1", "U1")
+
+
+async def test_buttons_are_registered(required_env: dict[str, str]) -> None:
+    engine = AsyncMock()
+    app = build_bolt_app(
+        make_settings(), engine, AsyncWebClient(token="xoxb-x"), authorize=fake_authorize
+    )
+    body = {
+        "type": "block_actions",
+        "user": {"id": "U2"},
+        "channel": {"id": "C1"},
+        "team": {"id": "T1"},
+        "trigger_id": "trig",
+        "response_url": "https://hooks.slack.com/actions/x",
+        "actions": [
+            {"action_id": "jargonator_join", "value": "g1", "block_id": "b", "type": "button"}
+        ],
+    }
+    response = await app.async_dispatch(AsyncBoltRequest(body=body, mode="socket_mode"))
+    assert response.status == 200
+    engine.join.assert_awaited_once_with("C1", "U2")

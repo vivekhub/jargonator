@@ -1,0 +1,52 @@
+{
+  "blocks": [
+    {
+      "elements": [
+        {
+          "text": "*Level:* 🌶️🌶️ Spicy",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
+    },
+    {
+      "text": {
+        "text": "> &lt;b&gt;synergy&lt;/b&gt;",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "block_id": "guess",
+      "element": {
+        "action_id": "value",
+        "max_length": 200,
+        "placeholder": {
+          "text": "One guess, no edits",
+          "type": "plain_text"
+        },
+        "type": "plain_text_input"
+      },
+      "label": {
+        "text": "What did they actually say?",
+        "type": "plain_text"
+      },
+      "type": "input"
+    }
+  ],
+  "callback_id": "jargonator_guess_modal",
+  "close": {
+    "text": "Cancel",
+    "type": "plain_text"
+  },
+  "private_metadata": "round-9",
+  "submit": {
+    "text": "Submit guess",
+    "type": "plain_text"
+  },
+  "title": {
+    "text": "Round 2 guess",
+    "type": "plain_text"
+  },
+  "type": "modal"
+}

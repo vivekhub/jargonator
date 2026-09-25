@@ -835,7 +835,7 @@ Final: update DECISIONS.md with anything decided along the way, and confirm all 
 - [x] 19 TimerService + container wiring
 - [x] 20 Restart recovery
 - [x] 21 Real gateway + slash commands
-- [ ] 22 Buttons + modals
+- [x] 22 Buttons + modals
 - [ ] 23 main, health, shutdown
 - [ ] 24 Full-game integration + coverage
 - [ ] 25 Docker, manifest, docs

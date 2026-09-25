@@ -115,6 +115,48 @@ class GameEngine:
             elif kind is TimerKind.RESUME:
                 await self.on_resume(game_id, round_id)
 
+    async def check_can_write(self, user_id: str, round_id: str) -> None:
+        """Raise ``UserFacingError`` unless ``user_id`` may submit a sentence now (checked
+        before opening the sentence modal)."""
+        rnd = await self.repo.get_round(round_id)
+        if rnd is None:
+            raise UserFacingError("That round is over.")
+        game = await self._reload(rnd.game_id)
+        current = await self.repo.get_current_round(game.id)
+        if (
+            current is None
+            or current.id != round_id
+            or current.status is not RoundStatus.AWAITING_SENTENCE
+        ):
+            raise UserFacingError("That round is no longer waiting for a sentence.")
+        if current.writer_user_id != user_id:
+            raise UserFacingError("It's not your turn to write.")
+        if current.writer_deadline is not None and self.clock.now() >= current.writer_deadline:
+            raise UserFacingError("⏰ Time's up for this round.")
+
+    async def guess_context(self, user_id: str, round_id: str) -> tuple[int, JargonLevel, str]:
+        """(round number, level, jargon) for the guess modal, or ``UserFacingError`` if
+        ``user_id`` can't guess in this round now."""
+        rnd = await self.repo.get_round(round_id)
+        if rnd is None:
+            raise UserFacingError("That round is over.")
+        live = await self._live_round(rnd.game_id, round_id, GameState.GUESSING)
+        if live is None:
+            raise UserFacingError("Guessing for that round is over.")
+        _, rnd = live
+        if user_id not in {g.user_id for g in await self.repo.get_round_guessers(round_id)}:
+            raise UserFacingError("You weren't dealt into this round.")
+        previous = next(
+            (g for g in await self.repo.get_guesses(round_id) if g.user_id == user_id), None
+        )
+        if previous is not None:
+            raise UserFacingError(f"You already guessed: {previous.text}")
+        if rnd.guess_deadline is not None and self.clock.now() >= rnd.guess_deadline:
+            raise UserFacingError("⏰ Time's up for this round.")
+        if rnd.level is None or rnd.jargon is None:
+            raise UserFacingError("Guessing for that round is over.")
+        return rnd.number, rnd.level, rnd.jargon
+
     async def get_status(self, channel_id: str) -> StatusView | None:
         game = await self.repo.get_active_game_by_channel(channel_id)
         if game is None:

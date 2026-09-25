@@ -8,6 +8,7 @@ from slack_sdk.web.async_client import AsyncWebClient
 
 from jargonator.config import Settings
 from jargonator.engine.game_engine import GameEngine
+from jargonator.slack import actions
 from jargonator.slack.commands import handle_jargonator
 
 
@@ -36,4 +37,5 @@ def build_bolt_app(
             settings=settings,
         )
 
+    actions.register(app, engine, settings)
     return app

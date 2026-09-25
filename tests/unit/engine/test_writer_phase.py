@@ -160,3 +160,17 @@ async def test_inactive_player_not_chosen_as_writer(harness: Harness) -> None:
     await harness.repo.update_player(game.id, "U3", status=PlayerStatus.INACTIVE)
     await harness.engine.start_game("C1", "U1")
     assert (await harness.round()).writer_user_id in {"U1", "U2"}
+
+
+async def test_check_can_write(harness: Harness) -> None:
+    await start(harness, "U1", "U2")
+    writer, round_id = await writer_and_round(harness)
+    other = ({"U1", "U2"} - {writer}).pop()
+    await harness.engine.check_can_write(writer, round_id)  # no error
+    with pytest.raises(UserFacingError, match="not your turn"):
+        await harness.engine.check_can_write(other, round_id)
+    with pytest.raises(UserFacingError, match="over"):
+        await harness.engine.check_can_write(writer, "nope")
+    harness.clock.advance(91)
+    with pytest.raises(UserFacingError, match="Time's up"):
+        await harness.engine.check_can_write(writer, round_id)

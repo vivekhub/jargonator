@@ -96,3 +96,6 @@ Decisions made during implementation that `spec.md` does not cover.
 | 2026-09-25 | The start modal's third field is "Auto-start after (seconds, 0 = host starts)", i.e. the lobby join window | Makes the lobby auto-start (spec §3.1) understandable to hosts. |
 | 2026-09-25 | `/jargonator join` and `leave` reply with a short ephemeral confirmation. `next` and `end` reply with nothing extra | Their public channel messages are the feedback. |
 | 2026-09-25 | pytest turns "coroutine was never awaited" warnings into errors | An un-awaited coroutine is almost always a bug. This caught a flawed mock in the command tests. |
+| 2026-09-25 | Before opening the sentence or guess modal, handlers call `engine.check_can_write` / `engine.guess_context`, and reply ephemerally if the round has moved on | No form that can only fail on submit. The guess modal also shows the jargon again. |
+| 2026-09-25 | Modal handlers await the engine right after `ack()` rather than spawning a task | Bolt already sends the ack immediately and runs each request in its own task, so errors stay handled in one place. |
+| 2026-09-25 | If the bot can't post an ephemeral in the channel (e.g. not invited), a start-modal error falls back to a DM | The user always learns why the game didn't start. |

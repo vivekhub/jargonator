@@ -125,3 +125,20 @@ async def test_race_between_guesses_and_deadline(harness: Harness) -> None:
     assert (await harness.round()).status is not RoundStatus.GUESSING
     closes = [m for m in harness.slack.messages_in("C1") if "guessing closed" in m.text]
     assert len(closes) <= 1
+
+
+async def test_guess_context(harness: Harness) -> None:
+    writer, guessers, round_id = await guessing(harness, "U1", "U2", "U3")
+    number, level, jargon = await harness.engine.guess_context(guessers[0], round_id)
+    rnd = await harness.round()
+    assert (number, level, jargon) == (rnd.number, rnd.level, rnd.jargon)
+    with pytest.raises(UserFacingError, match="dealt"):
+        await harness.engine.guess_context(writer, round_id)
+    await harness.engine.submit_guess(guessers[0], round_id, "I own cats")
+    with pytest.raises(UserFacingError, match="already guessed"):
+        await harness.engine.guess_context(guessers[0], round_id)
+    harness.clock.advance(61)
+    with pytest.raises(UserFacingError, match="Time's up"):
+        await harness.engine.guess_context(guessers[1], round_id)
+    with pytest.raises(UserFacingError, match="over"):
+        await harness.engine.guess_context(guessers[1], "nope")

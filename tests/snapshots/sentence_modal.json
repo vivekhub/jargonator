@@ -1,0 +1,43 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "text": "Write one simple, true sentence about yourself. Keep it friendly!",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "block_id": "sentence",
+      "element": {
+        "action_id": "value",
+        "max_length": 150,
+        "placeholder": {
+          "text": "e.g. I ran a marathon last year",
+          "type": "plain_text"
+        },
+        "type": "plain_text_input"
+      },
+      "label": {
+        "text": "Sentence",
+        "type": "plain_text"
+      },
+      "type": "input"
+    }
+  ],
+  "callback_id": "jargonator_sentence_modal",
+  "close": {
+    "text": "Cancel",
+    "type": "plain_text"
+  },
+  "private_metadata": "round-9",
+  "submit": {
+    "text": "Jargonize it",
+    "type": "plain_text"
+  },
+  "title": {
+    "text": "Your sentence",
+    "type": "plain_text"
+  },
+  "type": "modal"
+}
