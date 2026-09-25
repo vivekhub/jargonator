@@ -228,7 +228,7 @@ A single command `/jargonator` with subcommands. Unknown subcommand → help.
 | M1 Lobby | channel | Title, host, settings summary, joined players list, **Join**, **Start game** (host). Updated live. Stays as the "game card" with Join for the whole game. |
 | M2 Round start | channel | "🎤 Round N — @writer is writing…" + writer countdown deadline (Slack `<!date>` formatting). |
 | M3 Writer prompt | DM to writer | Instructions + example + **Write sentence** button (opens modal). Reminder at 30 s left. |
-| M4 Jargon out | channel (update M2) | "📨 @writer's jargon is out — check your DMs! (k/N guessed)". Never shows the jargon. |
+| M4 Jargon out | channel (update M2) | "📨 @writer's jargon is out — check your DMs and guess there, not in this channel! (k/N guessed)". Never shows the jargon. |
 | M5 Guess prompt | DM to each guesser | Level badge, jargon in a quote block, deadline, **Submit guess** button. After submission it is updated to show "✅ Your guess: …". After the round, updated to link to the results. |
 | M6 Results | channel | Per §3.8. |
 | M7 Final scoreboard | channel | Per §3.9. |

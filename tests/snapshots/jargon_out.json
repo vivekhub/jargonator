@@ -2,7 +2,7 @@
   "blocks": [
     {
       "text": {
-        "text": "📨 *Round 2*: <@U2>'s jargon is out. Guessers, check your DMs!",
+        "text": "📨 *Round 2*: <@U2>'s jargon is out. Guessers, check your DMs and guess there, *not in this channel*!",
         "type": "mrkdwn"
       },
       "type": "section"
@@ -17,5 +17,5 @@
       "type": "context"
     }
   ],
-  "text": "📨 Round 2: <@U2>'s jargon is out. Guessers, check your DMs! (1/3 guessed)"
+  "text": "📨 Round 2: <@U2>'s jargon is out. Guessers, check your DMs and guess there, not in this channel! (1/3 guessed)"
 }

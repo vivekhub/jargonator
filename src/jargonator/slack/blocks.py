@@ -171,12 +171,13 @@ def jargon_out(
     """M4: replaces M2 once the jargon is out. Never shows the jargon itself."""
     text = (
         f"📨 Round {round_no}: {mention(writer_id)}'s jargon is out. "
-        f"Guessers, check your DMs! ({guessed}/{total} guessed)"
+        "Guessers, check your DMs and guess there, not in this channel! "
+        f"({guessed}/{total} guessed)"
     )
     return text, [
         _section(
             f"📨 *Round {round_no}*: {mention(writer_id)}'s jargon is out. "
-            "Guessers, check your DMs!"
+            "Guessers, check your DMs and guess there, *not in this channel*!"
         ),
         _context(f"🗳️ *{guessed}/{total} guessed* · closes {deadline_text(deadline)}"),
     ]

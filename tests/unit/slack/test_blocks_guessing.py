@@ -23,6 +23,7 @@ def test_jargon_out_snapshot_and_never_contains_jargon() -> None:
     text, blocks = jargon_out(2, "U2", 1, 3, DEADLINE)
     assert_snapshot("jargon_out", {"text": text, "blocks": blocks})
     assert "1/3 guessed" in text
+    assert "not in this channel" in text and "not in this channel" in str(blocks)
     assert "feline" not in str(blocks) and "feline" not in text
 
 
