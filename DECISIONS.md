@@ -43,3 +43,7 @@ Decisions made during implementation that `spec.md` does not cover.
 | 2026-09-24 | Migration 0003 drops `guesses.similarity` and adds `guesses.score` (int) and `rounds.llm_retry_at`. Earlier migrations are untouched | "Never edit a shipped migration." No production data exists yet, so dropping the float column loses nothing. |
 | 2026-09-24 | `GameEvent.JARGON_FAILED` removed. A second essential failure is an `END` event | Matches the new failure rule. A first failure keeps the state and waits for the retry timer. |
 | 2026-09-24 | `TurnOrder.requeue_front` kept | It's no longer needed for LLM failures, but it's a tested general tool, and cheap to keep for the engine. |
+| 2026-09-25 | The OpenAI SDK is built with `max_retries=0` | `OpenRouterClient` owns the retry policy (spec §7.1). The SDK's default of 2 internal retries would silently triple every attempt. |
+| 2026-09-25 | Any unexpected exception from the SDK counts as a non-retryable attempt failure (skip to the fallback), rather than crashing the caller | The engine only needs to handle `LLMError`. The original error is still logged and chained. |
+| 2026-09-25 | A Markdown code fence around the JSON reply is stripped before parsing | Some models wrap JSON in fences even in JSON mode. Accepting it avoids a pointless retry. |
+| 2026-09-25 | Empty/missing message content counts as a retryable parse failure | Same class of problem as malformed JSON. |

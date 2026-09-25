@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from jargonator.config import Settings
 from jargonator.db.repo import Repo
 from jargonator.db.session import create_engine_and_sessionmaker, run_migrations
+from jargonator.llm.client import OpenRouterClient, build_openrouter_client
 
 
 @dataclass
@@ -18,8 +19,10 @@ class Container:
     settings: Settings
     db_engine: AsyncEngine
     repo: Repo
+    llm_client: OpenRouterClient
 
     async def aclose(self) -> None:
+        await self.llm_client.aclose()
         await self.db_engine.dispose()
 
 
@@ -31,4 +34,5 @@ async def build_container(settings: Settings) -> Container:
         settings=settings,
         db_engine=engine,
         repo=Repo(sessionmaker),
+        llm_client=build_openrouter_client(settings),
     )

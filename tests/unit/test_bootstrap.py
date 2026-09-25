@@ -14,5 +14,6 @@ async def test_build_container_against_tmp_db(
     try:
         assert await container.repo.get_active_game_by_channel("C1") is None
         assert container.settings.min_players == 2
+        assert container.llm_client.fallback_model == "openai/gpt-4o-mini"
     finally:
         await container.aclose()
