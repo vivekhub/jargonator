@@ -1,0 +1,48 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "text": "⏸️ Not enough players to continue. Click Join to jump in, then the host can click Next round.",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "action_id": "jargonator_next",
+          "style": "primary",
+          "text": {
+            "emoji": true,
+            "text": "▶️ Next round",
+            "type": "plain_text"
+          },
+          "type": "button",
+          "value": "g1"
+        },
+        {
+          "action_id": "jargonator_end",
+          "style": "danger",
+          "text": {
+            "emoji": true,
+            "text": "🛑 End game",
+            "type": "plain_text"
+          },
+          "type": "button",
+          "value": "g1"
+        }
+      ],
+      "type": "actions"
+    },
+    {
+      "elements": [
+        {
+          "text": "Only the host can start the next round or end the game.",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
+    }
+  ],
+  "text": "⏸️ Not enough players to continue. Click Join to jump in, then the host can click Next round."
+}

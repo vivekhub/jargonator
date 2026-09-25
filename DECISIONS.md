@@ -79,3 +79,7 @@ Decisions made during implementation that `spec.md` does not cover.
 | 2026-09-25 | The quip is generated after judging, not in parallel | It needs the outcome (who won, writer bonus) to be funny. That adds about 1 s, which is acceptable. |
 | 2026-09-25 | Results (M6) are rendered from the database (`_render_results`) | The same code re-renders the message for Claim host and for removing buttons at Next round. |
 | 2026-09-25 | After results, the round status message (M2) changes to "Round N is done. Results below 👇", and each guesser's DM points to the channel | Keeps the channel and the DMs consistent with the round's state. |
+| 2026-09-25 | `end_game(channel, user)` works out the reason itself (host, or admin via `is_workspace_admin`). Idle and LLM-failure ends use the internal `_end` | Callers can't claim a reason they aren't entitled to. |
+| 2026-09-25 | When paused, the pause notice carries its own Next/End buttons. Clicking Next while still short of players gives an ephemeral "Still waiting for players" | The host needs a button to resume, without a new notice on every click. |
+| 2026-09-25 | Ending mid-round updates the round status message to "Round N was cancelled" and each guesser's DM to "the game ended before round N finished" | Nobody is left looking at a live-looking prompt. |
+| 2026-09-25 | The lobby card loses all buttons when the game ends, and says "Game over" | Stale Join/Start buttons would only produce errors. |

@@ -1,0 +1,39 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "emoji": true,
+        "text": "🏆 Final scoreboard",
+        "type": "plain_text"
+      },
+      "type": "header"
+    },
+    {
+      "elements": [
+        {
+          "text": "The host ended the game. 5 rounds played.",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
+    },
+    {
+      "text": {
+        "text": "🥇 <@U2>: *26 pts*, 2 round wins\n🥇 <@U3>: *26 pts*, 2 round wins\n🥉 <@U1>: *10 pts* — left\n4. <@U4>: *0 pts* — inactive",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "text": {
+        "text": "*Highlights*\n🎯 *Best guess:* <@U2>, “I own a pair of kitties” (98/100)\n🌀 *Most unhinged jargon* (from <@U3>'s sentence): _I operationalise a paradigm-shifting caffeine ingestion framework._\n🕵️ *Master of mystery:* <@U1> stumped the table 2 times",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    }
+  ],
+  "text": "🏆 Final scoreboard"
+}

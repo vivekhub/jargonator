@@ -24,7 +24,7 @@ from jargonator.db.repo import (
     UserInOtherGameError,
 )
 from jargonator.domain.scoring import GuessInput, ScoringRules, score_round
-from jargonator.domain.standings import PlayerScore, rank_players
+from jargonator.domain.standings import PlayerScore, RoundSummary, compute_highlights, rank_players
 from jargonator.domain.state import (
     GameEvent,
     GameState,
@@ -432,12 +432,8 @@ class GameEngine:
     async def _end_for_llm_failure(self, game: GameRecord, round_id: str) -> None:
         """Caller holds the game lock."""
         log.error("game_ended_llm_failure", game_id=game.id, round_id=round_id)
-        await self.repo.update_round(round_id, status=RoundStatus.VOIDED, ended_at=self.clock.now())
         await self._post(game.channel_id, *blocks.llm_failure_notice())
-        self.scheduler.cancel_all(game.id)
-        await self.repo.update_game(
-            game.id, state=GameState.ENDED, ended_at=self.clock.now(), end_reason="llm_failure"
-        )
+        await self._end(game, "llm_failure")
 
     # ===================================================================================
     # Guessing (spec §3.6)
@@ -697,6 +693,131 @@ class GameEngine:
         )
 
     # ===================================================================================
+    # Next round, pausing and ending (spec §3.2, §3.9)
+    # ===================================================================================
+
+    async def next_round(self, channel_id: str, user_id: str) -> None:
+        game = await self._require_channel_game(channel_id)
+        async with self._lock(game.id):
+            game = await self._reload(game.id)
+            if game.state not in (GameState.AWAITING_NEXT, GameState.PAUSED_PLAYERS):
+                raise UserFacingError("There's no round to move on from right now.")
+            self._require_host(game, user_id)
+            enough = len(await self._active_ids(game.id)) >= self.settings.min_players
+            if not enough and game.state is GameState.PAUSED_PLAYERS:
+                raise UserFacingError(
+                    f"Still waiting for players: you need at least {self.settings.min_players}."
+                )
+            self.scheduler.cancel(game.id, TimerKind.HOST_CLAIM)
+            previous = await self.repo.get_current_round(game.id)
+            if previous is not None:
+                await self._rerender_round_message(game, previous.id, "none")
+            if not enough:
+                await self._transition(game, GameEvent.NEXT_ROUND_INSUFFICIENT_PLAYERS)
+                await self._post(game.channel_id, *blocks.paused_notice(game.id))
+                await self._touch(game.id)
+                return
+            await self._begin_round(game, GameEvent.NEXT_ROUND)
+
+    async def end_game(self, channel_id: str, user_id: str) -> None:
+        """End by the host, or by a workspace admin (spec §3.9, §3.10)."""
+        game = await self._require_channel_game(channel_id)
+        async with self._lock(game.id):
+            game = await self._reload(game.id)
+            if user_id == game.host_user_id:
+                reason = "host"
+            elif await self.slack.is_workspace_admin(user_id):
+                reason = "admin"
+            else:
+                raise UserFacingError(
+                    f"Only the host ({blocks.mention(game.host_user_id)}) or a workspace admin "
+                    "can end the game."
+                )
+            await self._end(game, reason)
+
+    async def on_idle_timeout(self, game_id: str) -> None:
+        async with self._lock(game_id):
+            game = await self.repo.get_game(game_id)
+            if game is None or game.state is GameState.ENDED:
+                return
+            deadline = self._idle_deadline(game.last_activity_at)
+            if self.clock.now() < deadline:  # activity since this timer was set
+                self.scheduler.schedule(game_id, TimerKind.IDLE, deadline, None)
+                return
+            await self._end(game, "idle")
+
+    async def _end(self, game: GameRecord, reason: str) -> None:
+        """End the game: void any round in progress, post the final scoreboard, free the
+        channel and players. Caller holds the lock."""
+        now = self.clock.now()
+        self.scheduler.cancel_all(game.id)
+        rnd = await self.repo.get_current_round(game.id)
+        if rnd is not None:
+            self._counter_updates.cancel(rnd.id)
+            if rnd.status in _IN_PROGRESS:
+                await self.repo.update_round(rnd.id, status=RoundStatus.VOIDED, ended_at=now)
+                for guesser in await self.repo.get_round_guessers(rnd.id):
+                    if guesser.dm_message_ts is not None:
+                        await self._update(
+                            MessageRef(guesser.dm_channel_id, guesser.dm_message_ts),
+                            *blocks.round_ended_early(rnd.number),
+                        )
+                if rnd.status_message_ts is not None:
+                    await self._update(
+                        MessageRef(game.channel_id, rnd.status_message_ts),
+                        *blocks.notice(f"🛑 Round {rnd.number} was cancelled: the game ended."),
+                    )
+            else:
+                await self._rerender_round_message(game, rnd.id, "none")
+
+        players = await self.repo.get_players(game.id)
+        standings = rank_players(
+            [PlayerScore(p.user_id, p.score, p.round_wins, p.status) for p in players]
+        )
+        summaries = await self._round_summaries(game.id)
+        played = sum(1 for r in summaries if r.status is RoundStatus.COMPLETED)
+        await self._post(
+            game.channel_id,
+            *blocks.final_scoreboard(standings, compute_highlights(summaries), played, reason),
+        )
+        game = await self.repo.update_game(
+            game.id, state=GameState.ENDED, ended_at=now, end_reason=reason
+        )
+        await self._refresh_lobby(game)
+        log.info("game_ended", game_id=game.id, reason=reason, rounds=played)
+
+    async def _round_summaries(self, game_id: str) -> list[RoundSummary]:
+        summaries = []
+        for rnd in await self.repo.list_rounds(game_id):
+            best = next((g for g in await self.repo.get_guesses(rnd.id) if g.rank == 1), None)
+            summaries.append(
+                RoundSummary(
+                    writer_id=rnd.writer_user_id,
+                    level=rnd.level,
+                    jargon=rnd.jargon,
+                    best_score=best.score if best else None,
+                    best_guess_user=best.user_id if best else None,
+                    best_guess_text=best.text if best else None,
+                    writer_bonus=rnd.writer_bonus_awarded,
+                    status=rnd.status,
+                )
+            )
+        return summaries
+
+    async def _rerender_round_message(
+        self, game: GameRecord, round_id: str, controls: blocks.Controls
+    ) -> None:
+        """Redraw a finished round's results message (e.g. to add or remove buttons)."""
+        rnd = await self.repo.get_round(round_id)
+        if rnd is None or rnd.results_message_ts is None:
+            return
+        if rnd.status is RoundStatus.COMPLETED:
+            text, message_blocks, _ = await self._render_results(game, round_id, controls)
+            await self._update(
+                MessageRef(game.channel_id, rnd.results_message_ts), text, message_blocks
+            )
+
+    # ===================================================================================
     # Helpers
     # ===================================================================================
 
@@ -816,6 +937,15 @@ class GameEngine:
         except SlackDeliveryError as exc:
             log.warning("slack_update_failed", channel_id=ref.channel, code=exc.code)
 
+
+_IN_PROGRESS = frozenset(
+    {
+        RoundStatus.AWAITING_SENTENCE,
+        RoundStatus.GENERATING,
+        RoundStatus.GUESSING,
+        RoundStatus.JUDGING,
+    }
+)
 
 _ROUND_STATUS_FOR = {
     GameState.AWAITING_SENTENCE: RoundStatus.AWAITING_SENTENCE,

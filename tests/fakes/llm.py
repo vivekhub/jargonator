@@ -1,5 +1,6 @@
 """Scriptable LLMTasks for engine tests (no network)."""
 
+import asyncio
 import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
@@ -45,6 +46,22 @@ class FakeLLM:
         self.quip_text = quip
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self._failures: dict[str, list[Exception]] = {}
+        self.gates: dict[str, asyncio.Event] = {}
+        """``gates[method]``: calls to that method wait until the event is set."""
+        self.entered: dict[str, asyncio.Event] = {}
+        """``entered[method]`` is set as soon as that method is called."""
+
+    def hold(self, method: str) -> tuple[asyncio.Event, asyncio.Event]:
+        """Make ``method`` block until released. Returns (entered, release)."""
+        self.gates[method] = asyncio.Event()
+        self.entered[method] = asyncio.Event()
+        return self.entered[method], self.gates[method]
+
+    async def _gate(self, method: str) -> None:
+        if method in self.entered:
+            self.entered[method].set()
+        if method in self.gates:
+            await self.gates[method].wait()
 
     def fail(self, method: str, exc: Exception, times: int = 1) -> None:
         self._failures.setdefault(method, []).extend([exc] * times)
@@ -81,6 +98,7 @@ class FakeLLM:
 
     async def judge(self, original: str, jargon: str, guesses: Mapping[str, str]) -> dict[str, int]:
         self._record("judge", original=original, jargon=jargon, guesses=dict(guesses))
+        await self._gate("judge")
         return {
             gid: self.judge_scores.get(text, overlap_score(original, text))
             for gid, text in guesses.items()

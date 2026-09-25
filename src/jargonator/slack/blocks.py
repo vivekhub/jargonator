@@ -9,8 +9,8 @@ from datetime import datetime
 from typing import Literal
 
 from jargonator.db.records import GameRecord, PlayerRecord
-from jargonator.domain.standings import Standing
-from jargonator.domain.state import JargonLevel, PlayerStatus
+from jargonator.domain.standings import Highlights, Standing
+from jargonator.domain.state import GameState, JargonLevel, PlayerStatus
 from jargonator.slack import ids
 from jargonator.slack.gateway import Block
 
@@ -71,9 +71,13 @@ def _player_line(player: PlayerRecord, host_user_id: str) -> str:
 def lobby(game: GameRecord, players: Sequence[PlayerRecord], started: bool) -> Message:
     """M1: the game card. Join stays for the whole game; Start only until the game starts."""
     active = [p for p in players if p.status is PlayerStatus.ACTIVE]
-    status = "Game in progress. Jump in any time!" if started else "Waiting for players…"
-    buttons = [_button("🙋 Join", ids.JOIN, game.id, style="primary")]
-    if not started:
+    ended = game.state is GameState.ENDED
+    if ended:
+        status = "Game over. Thanks for playing!"
+    else:
+        status = "Game in progress. Jump in any time!" if started else "Waiting for players…"
+    buttons = [] if ended else [_button("🙋 Join", ids.JOIN, game.id, style="primary")]
+    if not started and not ended:
         buttons.append(_button("🚀 Start game", ids.START, game.id))
 
     blocks: list[Block] = [
@@ -88,8 +92,9 @@ def lobby(game: GameRecord, players: Sequence[PlayerRecord], started: bool) -> M
             f"*Players ({len(active)})*\n"
             + "\n".join(_player_line(p, game.host_user_id) for p in players)
         ),
-        {"type": "actions", "elements": buttons},
     ]
+    if buttons:
+        blocks.append({"type": "actions", "elements": buttons})
     text = f"💼 Jargonator: {plural(len(active), 'player')}. {status}"
     return text, blocks
 
@@ -352,6 +357,69 @@ def failed_round_reveal(
         _section(f"*The original:* “{escape(sentence)}”"),
         _section("*Guesses*\n" + (guess_lines or "_none_")),
     ]
+
+
+# --- continuing and ending (M7, M8) ------------------------------------------------------------
+
+END_REASONS = {
+    "host": "The host ended the game.",
+    "admin": "A workspace admin ended the game.",
+    "idle": "💤 The game ended after 2 hours of inactivity.",
+    "llm_failure": "The game ended because the AI service stopped responding.",
+}
+
+
+def paused_notice(game_id: str) -> Message:
+    text = (
+        "⏸️ Not enough players to continue. Click Join to jump in, then the host can "
+        "click Next round."
+    )
+    return text, [_section(text), *_controls(game_id, "", "host")]
+
+
+def round_ended_early(round_no: int) -> Message:
+    text = f"🛑 The game ended before round {round_no} finished."
+    return text, [_section(text)]
+
+
+def final_scoreboard(
+    standings: Sequence[Standing], highlights: Highlights, rounds_played: int, end_reason: str
+) -> Message:
+    """M7 (spec §3.9): ranks share medals on ties ("1, 1, 3")."""
+    played = f"{plural(rounds_played, 'round')} played"
+    rows = []
+    for s in standings:
+        place = MEDALS.get(s.rank, f"{s.rank}.")
+        wins = f", {plural(s.player.round_wins, 'round win')}" if s.player.round_wins else ""
+        rows.append(
+            f"{place} {mention(s.player.user_id)}: *{plural(s.player.score, 'pt')}*{wins}"
+            f"{_STATUS_SUFFIX[s.player.status]}"
+        )
+    out: list[Block] = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": "🏆 Final scoreboard", "emoji": True},
+        },
+        _context(f"{END_REASONS.get(end_reason, 'The game ended.')} {played}."),
+        _section("\n".join(rows) or "_Nobody scored._"),
+    ]
+    facts = []
+    if highlights.best_guess:
+        user, guess, score = highlights.best_guess
+        facts.append(f"🎯 *Best guess:* {mention(user)}, “{escape(guess)}” ({score}/100)")
+    if highlights.most_unhinged:
+        writer, jargon = highlights.most_unhinged
+        facts.append(
+            f"🌀 *Most unhinged jargon* (from {mention(writer)}'s sentence): _{escape(jargon)}_"
+        )
+    if highlights.top_stumper:
+        writer, count = highlights.top_stumper
+        facts.append(
+            f"🕵️ *Master of mystery:* {mention(writer)} stumped the table {plural(count, 'time')}"
+        )
+    if facts:
+        out += [{"type": "divider"}, _section("*Highlights*\n" + "\n".join(facts))]
+    return "🏆 Final scoreboard", out
 
 
 def llm_retry_notice(seconds: int) -> Message:

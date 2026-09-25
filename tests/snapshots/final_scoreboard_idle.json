@@ -1,0 +1,29 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "emoji": true,
+        "text": "🏆 Final scoreboard",
+        "type": "plain_text"
+      },
+      "type": "header"
+    },
+    {
+      "elements": [
+        {
+          "text": "💤 The game ended after 2 hours of inactivity. 0 rounds played.",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
+    },
+    {
+      "text": {
+        "text": "_Nobody scored._",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    }
+  ],
+  "text": "🏆 Final scoreboard"
+}
