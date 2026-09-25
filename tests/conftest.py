@@ -1,8 +1,13 @@
 import logging
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 import structlog
+
+if TYPE_CHECKING:
+    from tests.engine_harness import Harness
 
 REQUIRED_ENV = {
     "SLACK_BOT_TOKEN": "xoxb-test",
@@ -37,3 +42,12 @@ def required_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     for key, value in REQUIRED_ENV.items():
         monkeypatch.setenv(key, value)
     return dict(REQUIRED_ENV)
+
+
+@pytest.fixture
+async def harness(tmp_path: "Path", required_env: dict[str, str]) -> "AsyncIterator[Harness]":
+    from tests.engine_harness import make_harness
+
+    h = await make_harness(tmp_path)
+    yield h
+    await h.aclose()

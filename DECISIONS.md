@@ -65,3 +65,7 @@ Decisions made during implementation that `spec.md` does not cover.
 | 2026-09-25 | Snapshot tests store Block Kit JSON in `tests/snapshots/`. A missing file is written, and `SNAPSHOT_UPDATE=1` refreshes them | Snapshot diffs show exactly what players will see change. They're reviewed and committed like code. |
 | 2026-09-25 | Every action/callback id lives in `slack/ids.py`, namespaced `jargonator_*` | Blocks and the handlers (Prompt 22) can't drift apart, and ids can't collide with other apps' ids. |
 | 2026-09-25 | `FakeSlackGateway` keeps each message's current state and its edit history | Engine tests assert what a message looks like now (e.g. the live "3/5 guessed" counter) and how it got there. |
+| 2026-09-25 | If posting the lobby fails (e.g. the bot isn't in the channel), the game is marked ENDED with `end_reason="setup_failed"` and the user is told to `/invite` the bot | Frees the channel and the host immediately without deleting data. Adds a fifth end reason to spec §10's list. |
+| 2026-09-25 | A duplicate Join tells the user "You're already in this game 👍" and changes nothing | Idempotent, with friendly feedback. |
+| 2026-09-25 | "@user joined" notices are posted only after the game starts. In the lobby, the live player list is enough | Less channel noise. |
+| 2026-09-25 | Engine Slack calls go through `_post`/`_update`, which log and swallow `SlackDeliveryError` (except creating the lobby) | A failed Slack post must never leave game state half-changed. |
