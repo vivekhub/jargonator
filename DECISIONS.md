@@ -87,3 +87,6 @@ Decisions made during implementation that `spec.md` does not cover.
 | 2026-09-25 | A skipped round posts a "results-lite" message (the reason plus Next/End buttons), stored as the round's `results_message_ts` | The host always has buttons to continue, and Claim host and button cleanup work the same for skipped and completed rounds. |
 | 2026-09-25 | A writer timeout doesn't count as activity for the idle timer | Otherwise an abandoned game with AFK writers would never hit the 2 h idle end. |
 | 2026-09-25 | Leave and kick share one `_remove_player` path (host transfer, skipping the writer's round, early end) | One tested path for every way a player can drop out. |
+| 2026-09-25 | `BoltSlackGateway` (planned for Prompt 21) was built in Prompt 19 | `build_container` now needs a gateway, and `main` must pass a real one, rather than an orphaned placeholder. |
+| 2026-09-25 | `TimerService` removes a timer from its registry before calling the handler | A handler can then reschedule its own kind (e.g. the idle timer pushing itself out) without cancelling the running task. |
+| 2026-09-25 | The container shuts down in dependency order: timers, engine background work, the LLM client, then the DB | Nothing fires or writes during teardown. |

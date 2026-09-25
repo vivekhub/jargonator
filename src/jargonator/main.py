@@ -8,11 +8,13 @@ from jargonator import __version__
 from jargonator.bootstrap import build_container
 from jargonator.config import Settings
 from jargonator.logging import configure_logging
+from jargonator.slack.gateway import BoltSlackGateway, build_web_client
 
 
 async def run(settings: Settings) -> None:
     log = structlog.get_logger()
-    container = await build_container(settings)
+    web_client = build_web_client(settings.slack_bot_token.get_secret_value())
+    container = await build_container(settings, slack=BoltSlackGateway(web_client))
     try:
         log.info("container_ready")
     finally:

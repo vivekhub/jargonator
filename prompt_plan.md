@@ -697,7 +697,7 @@ Finish with `make check` green.
 ```text
 Follow CLAUDE.md. Read spec.md §4, §6.3 and §6.4.
 
-Goal: talk to real Slack and handle /jargonator.
+Goal: talk to real Slack and handle /jargonator. (Build note: item 1, BoltSlackGateway, was built early in Prompt 19 so main could wire a real gateway without a placeholder. Only items 2–4 remain.)
 
 1. slack/gateway.py: `BoltSlackGateway(client: AsyncWebClient)` implementing SlackGateway:
    - post/update/ephemeral via chat.* methods; open_dm via conversations.open (cache per user); is_workspace_admin via users.info (is_admin or is_owner; cache for 10 min).
@@ -832,7 +832,7 @@ Final: update DECISIONS.md with anything decided along the way, and confirm all 
 - [x] 16 Engine V: judging + results
 - [x] 17 Engine VI: next/pause/end/final board
 - [x] 18 Engine VII: timeouts + host management
-- [ ] 19 TimerService + container wiring
+- [x] 19 TimerService + container wiring
 - [ ] 20 Restart recovery
 - [ ] 21 Real gateway + slash commands
 - [ ] 22 Buttons + modals

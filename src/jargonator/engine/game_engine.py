@@ -77,6 +77,28 @@ class GameEngine:
         """Cancel background work (debounced Slack updates)."""
         await self._counter_updates.aclose()
 
+    async def dispatch_timer(self, game_id: str, kind: TimerKind, round_id: str | None) -> None:
+        """Entry point for fired timers (bound to TimerService). Handlers re-check state,
+        so a stale timer is a harmless no-op."""
+        with structlog.contextvars.bound_contextvars(game_id=game_id, round_id=round_id):
+            log.info("timer_fired", kind=str(kind))
+            if kind is TimerKind.LOBBY:
+                await self.on_lobby_deadline(game_id)
+            elif kind is TimerKind.IDLE:
+                await self.on_idle_timeout(game_id)
+            elif round_id is None:
+                log.warning("timer_missing_round", kind=str(kind))
+            elif kind is TimerKind.WRITER_REMINDER:
+                await self.on_writer_reminder(game_id, round_id)
+            elif kind is TimerKind.WRITER_DEADLINE:
+                await self.on_writer_timeout(game_id, round_id)
+            elif kind is TimerKind.GUESS_DEADLINE:
+                await self.on_guess_deadline(game_id, round_id)
+            elif kind is TimerKind.LLM_RETRY:
+                await self.on_llm_retry(game_id, round_id)
+            elif kind is TimerKind.HOST_CLAIM:
+                await self.on_host_claim_available(game_id, round_id)
+
     # ===================================================================================
     # Lobby: create / join / leave (spec §3.1, §3.2, §3.10)
     # ===================================================================================
