@@ -6,6 +6,7 @@ work, close the LLM client and the DB, stop the health server.
 """
 
 import asyncio
+import contextlib
 import signal
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -86,10 +87,20 @@ async def run(settings: Settings, factories: RuntimeFactories | None = None) -> 
         await container.engine.recover()
         app = build_bolt_app(settings, container.engine, web_client)
         handler = factories.socket_handler(app, settings.slack_app_token.get_secret_value())
-        await handler.connect_async()
-        health.socket_check = _socket_check(handler)
-        log.info("socket_connected")
-        await stop.wait()
+        # Race the connection against a stop request: with a bad app token, Socket Mode
+        # retries forever, and SIGTERM must still shut down cleanly.
+        connecting = asyncio.create_task(handler.connect_async())
+        stopping = asyncio.create_task(stop.wait())
+        await asyncio.wait({connecting, stopping}, return_when=asyncio.FIRST_COMPLETED)
+        if connecting.done():
+            connecting.result()  # re-raise a connection error
+            health.socket_check = _socket_check(handler)
+            log.info("socket_connected")
+            await stopping
+        else:
+            connecting.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await connecting
         log.info("shutdown_requested")
     finally:
         if handler is not None:

@@ -97,3 +97,34 @@ async def test_run_starts_recovers_and_shuts_down_cleanly(
     ):
         assert expected in events
     assert events.index("socket_connected") < events.index("shutdown_complete")
+
+
+class HangingSocketHandler(FakeSocketHandler):
+    """Never finishes connecting (like Socket Mode retrying with a bad app token)."""
+
+    async def connect_async(self) -> None:
+        self.events.append("connect")
+        await asyncio.Event().wait()
+
+
+async def test_stop_interrupts_a_hanging_connection(
+    required_env: dict[str, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        monkeypatch.setenv("HEALTH_PORT", str(probe.getsockname()[1]))
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'hang.db'}")
+    handler = HangingSocketHandler()
+    stop = asyncio.Event()
+    factories = RuntimeFactories(
+        socket_handler=lambda app, token: handler, stop_event=stop, install_signal_handlers=False
+    )
+    task = asyncio.create_task(run(Settings(_env_file=None), factories))  # type: ignore[call-arg]
+    async with asyncio.timeout(5):
+        while "connect" not in handler.events:  # noqa: ASYNC110 (test helper: polling is the point)
+            await asyncio.sleep(0.01)
+    stop.set()
+    await asyncio.wait_for(task, 2)  # returns promptly instead of hanging
+    assert handler.events == ["connect", "close"]

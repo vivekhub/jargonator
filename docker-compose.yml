@@ -1,0 +1,13 @@
+services:
+  jargonator:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      # A named volume (not ./data) so the container's non-root user owns it.
+      - jargonator-data:/data
+    ports:
+      - "127.0.0.1:8080:8080"  # /healthz, reachable from this host only
+
+volumes:
+  jargonator-data:

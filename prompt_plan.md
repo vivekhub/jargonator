@@ -838,4 +838,4 @@ Final: update DECISIONS.md with anything decided along the way, and confirm all 
 - [x] 22 Buttons + modals
 - [x] 23 main, health, shutdown
 - [x] 24 Full-game integration + coverage
-- [ ] 25 Docker, manifest, docs
+- [x] 25 Docker, manifest, docs

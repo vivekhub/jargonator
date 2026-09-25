@@ -1,0 +1,33 @@
+# Create the app at https://api.slack.com/apps → Create New App → From an app manifest.
+display_information:
+  name: Jargonator
+  description: Decode your colleagues' corporate jargon.
+  background_color: "#2c2d30"
+  long_description: >-
+    A multiplayer party game. Each round one player writes a simple sentence about
+    themselves, an AI turns it into corporate jargon, and everyone else has 60 seconds
+    to guess the original. An AI judge scores the guesses and the bot keeps score.
+features:
+  bot_user:
+    display_name: Jargonator
+    always_online: true
+  slash_commands:
+    - command: /jargonator
+      description: Play Jargonator (start, join, leave, status, next, kick, end, help)
+      usage_hint: "start | join | leave | status | next | kick @someone | end | help"
+      should_escape: true
+oauth_config:
+  scopes:
+    bot:
+      - commands
+      - chat:write
+      - im:write
+      - users:read
+      - channels:read
+      - groups:read
+settings:
+  interactivity:
+    is_enabled: true
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
