@@ -1,6 +1,8 @@
 """Shared setup for engine tests: a real SQLite repo plus fakes for everything else."""
 
+import asyncio
 import random
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,6 +23,20 @@ from tests.fakes.scheduler import RecordingScheduler
 from tests.fakes.slack import FakeMessage, FakeSlackGateway
 
 T0 = datetime(2026, 3, 2, 10, 0, tzinfo=UTC)
+
+
+async def eventually(predicate: Callable[[], bool]) -> None:
+    """Wait (in real time, up to 3 s) until ``predicate()`` holds. For background work that
+    touches the database, whose driver runs in a thread and so needs real time, not
+    fake-clock ticks."""
+    try:
+        async with asyncio.timeout(3):
+            while not predicate():  # noqa: ASYNC110 (test helper: polling is the point)
+                await asyncio.sleep(0.01)
+    except TimeoutError:
+        raise AssertionError("condition not met in time") from None
+
+
 CHANNEL = "C1"
 
 
@@ -124,6 +140,7 @@ class Harness:
         return [g.user_id for g in await self.repo.get_round_guessers(rnd.id)]
 
     async def aclose(self) -> None:
+        await self.engine.aclose()
         await self.db_engine.dispose()
 
 

@@ -828,7 +828,7 @@ Final: update DECISIONS.md with anything decided along the way, and confirm all 
 - [x] 12 Engine I: lobby
 - [x] 13 Engine II: start + writer phase
 - [x] 14 Engine III: generation + distribution
-- [ ] 15 Engine IV: guessing
+- [x] 15 Engine IV: guessing
 - [ ] 16 Engine V: judging + results
 - [ ] 17 Engine VI: next/pause/end/final board
 - [ ] 18 Engine VII: timeouts + host management

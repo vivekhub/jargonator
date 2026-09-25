@@ -16,7 +16,12 @@ import structlog
 from jargonator.clock import Clock
 from jargonator.config import Settings
 from jargonator.db.records import GameRecord, RoundRecord
-from jargonator.db.repo import ChannelBusyError, RepoProtocol, UserInOtherGameError
+from jargonator.db.repo import (
+    ChannelBusyError,
+    DuplicateGuessError,
+    RepoProtocol,
+    UserInOtherGameError,
+)
 from jargonator.domain.state import (
     GameEvent,
     GameState,
@@ -27,6 +32,7 @@ from jargonator.domain.state import (
 )
 from jargonator.domain.text import is_leaky, leaked_words
 from jargonator.domain.turn_order import TurnOrder
+from jargonator.engine.debounce import Debouncer
 from jargonator.engine.errors import UserFacingError
 from jargonator.engine.scheduler import Scheduler, TimerKind
 from jargonator.llm.client import LLMError
@@ -37,6 +43,7 @@ from jargonator.slack.gateway import Block, MessageRef, SlackDeliveryError, Slac
 log = structlog.get_logger()
 
 MIN_SENTENCE, MAX_SENTENCE = 5, 150
+MIN_GUESS, MAX_GUESS = 1, 200
 NOT_IN_CHANNEL_CODES = frozenset({"not_in_channel", "channel_not_found", "is_archived"})
 INVITE_HINT = "I can't post here yet. Invite me with `/invite @Jargonator` first, then try again."
 
@@ -61,6 +68,11 @@ class GameEngine:
         self.settings = settings
         self.rng = rng
         self._locks: dict[str, asyncio.Lock] = {}
+        self._counter_updates = Debouncer(clock)
+
+    async def aclose(self) -> None:
+        """Cancel background work (debounced Slack updates)."""
+        await self._counter_updates.aclose()
 
     # ===================================================================================
     # Lobby: create / join / leave (spec §3.1, §3.2, §3.10)
@@ -153,6 +165,9 @@ class GameEngine:
             await self._refresh_lobby(game)
             await self._touch(game.id)
             log.info("player_left", game_id=game.id, user_id=user_id)
+            close_round = await self._everyone_has_guessed(game)
+        if close_round is not None:
+            await self._close_guessing(game.id, close_round)
 
     # ===================================================================================
     # Starting the game and the writer phase (spec §3.1, §3.3, §3.4)
@@ -412,15 +427,111 @@ class GameEngine:
     # Guessing (spec §3.6)
     # ===================================================================================
 
+    async def submit_guess(self, user_id: str, round_id: str, text: str) -> None:
+        """One final guess per guesser (spec §3.6)."""
+        guess = text.strip()
+        rnd = await self.repo.get_round(round_id)
+        if rnd is None:
+            raise UserFacingError("That round is over.")
+        async with self._lock(rnd.game_id):
+            live = await self._live_round(rnd.game_id, round_id, GameState.GUESSING)
+            if live is None:
+                raise UserFacingError("Guessing for that round is over.")
+            game, rnd = live
+            guessers = {g.user_id: g for g in await self.repo.get_round_guessers(round_id)}
+            if user_id not in guessers:
+                if user_id == rnd.writer_user_id:
+                    raise UserFacingError("You wrote this one. Sit back and enjoy! 😄")
+                raise UserFacingError(
+                    "You weren't dealt into this round. You'll be in the next one!"
+                )
+            if rnd.guess_deadline is not None and self.clock.now() >= rnd.guess_deadline:
+                raise UserFacingError("⏰ Time's up for this round.")
+            if not MIN_GUESS <= len(guess) <= MAX_GUESS:
+                raise UserFacingError(
+                    f"Your guess must be {MIN_GUESS}–{MAX_GUESS} characters long."
+                )
+            previous = next(
+                (g for g in await self.repo.get_guesses(round_id) if g.user_id == user_id), None
+            )
+            if previous is not None:
+                raise UserFacingError(f"You already guessed: {previous.text}")
+            try:
+                await self.repo.add_guess(round_id, user_id, guess, self.clock.now())
+            except DuplicateGuessError as exc:
+                raise UserFacingError("You already guessed in this round.") from exc
+
+            dm = guessers[user_id]
+            if dm.dm_message_ts is not None and rnd.level is not None and rnd.jargon is not None:
+                await self._update(
+                    MessageRef(dm.dm_channel_id, dm.dm_message_ts),
+                    *blocks.guess_prompt_submitted(rnd.number, rnd.level, rnd.jargon, guess),
+                )
+            self._counter_updates.call(
+                round_id, lambda: self._refresh_guess_counter(rnd.game_id, round_id)
+            )
+            await self._touch(game.id)
+            log.info("guess_submitted", game_id=game.id, round_id=round_id, user_id=user_id)
+            close_round = await self._everyone_has_guessed(game)
+        if close_round is not None:
+            await self._close_guessing(rnd.game_id, close_round)
+
+    async def on_guess_deadline(self, game_id: str, round_id: str) -> None:
+        await self._close_guessing(game_id, round_id)
+
+    async def _everyone_has_guessed(self, game: GameRecord) -> str | None:
+        """The current round's id if it is GUESSING and nobody is left to guess
+        (guessers who left the game are not waited for). Caller holds the lock."""
+        if game.state is not GameState.GUESSING:
+            return None
+        rnd = await self.repo.get_current_round(game.id)
+        if rnd is None or rnd.status is not RoundStatus.GUESSING:
+            return None
+        guessed = {g.user_id for g in await self.repo.get_guesses(rnd.id)}
+        statuses = {p.user_id: p.status for p in await self.repo.get_players(game.id)}
+        pending = [
+            g.user_id
+            for g in await self.repo.get_round_guessers(rnd.id)
+            if g.user_id not in guessed and statuses.get(g.user_id) is not PlayerStatus.LEFT
+        ]
+        return None if pending else rnd.id
+
+    async def _refresh_guess_counter(self, game_id: str, round_id: str) -> None:
+        async with self._lock(game_id):
+            live = await self._live_round(game_id, round_id, GameState.GUESSING)
+            if live is None:
+                return  # closed meanwhile: _close_guessing owns the message now
+            game, rnd = live
+            if rnd.status_message_ts is None or rnd.guess_deadline is None:
+                return
+            guessed = len(await self.repo.get_guesses(round_id))
+            total = len(await self.repo.get_round_guessers(round_id))
+            await self._update(
+                MessageRef(game.channel_id, rnd.status_message_ts),
+                *blocks.jargon_out(
+                    rnd.number, rnd.writer_user_id, guessed, total, rnd.guess_deadline
+                ),
+            )
+
     async def _close_guessing(self, game_id: str, round_id: str) -> None:
+        """Idempotent: only the first caller (early end, deadline, leave) closes the round."""
         async with self._lock(game_id):
             live = await self._live_round(game_id, round_id, GameState.GUESSING)
             if live is None:
                 return
-            game, _ = live
+            game, rnd = live
+            self._counter_updates.cancel(round_id)
             self.scheduler.cancel(game_id, TimerKind.GUESS_DEADLINE)
             await self.repo.update_round(round_id, status=RoundStatus.JUDGING)
             await self._transition(game, GameEvent.GUESSING_CLOSED)
+            if rnd.status_message_ts is not None:
+                guessed = len(await self.repo.get_guesses(round_id))
+                total = len(await self.repo.get_round_guessers(round_id))
+                await self._update(
+                    MessageRef(game.channel_id, rnd.status_message_ts),
+                    *blocks.guessing_closed(rnd.number, rnd.writer_user_id, guessed, total),
+                )
+            log.info("guessing_closed", game_id=game_id, round_id=round_id)
 
     # ===================================================================================
     # Helpers
