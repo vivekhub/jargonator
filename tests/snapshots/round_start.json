@@ -1,0 +1,21 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "text": "🎤 *Round 3*: <@U2> is writing a sentence…",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "text": "✍️ Sentence due by <!date^1772445690^{time_secs}|10:01:30 UTC>",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
+    }
+  ],
+  "text": "🎤 Round 3: <@U2> is writing a sentence…"
+}

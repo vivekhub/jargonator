@@ -1,0 +1,37 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "text": "✍️ *It's your turn to write (round 3)!*\nWrite one *simple, true sentence about yourself*. The AI will turn it into corporate jargon, and everyone else will try to guess the original.\n_Example: I ran a marathon last year._",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "action_id": "jargonator_write_sentence",
+          "style": "primary",
+          "text": {
+            "emoji": true,
+            "text": "Write sentence",
+            "type": "plain_text"
+          },
+          "type": "button",
+          "value": "round-9"
+        }
+      ],
+      "type": "actions"
+    },
+    {
+      "elements": [
+        {
+          "text": "⏱️ Due by <!date^1772445690^{time_secs}|10:01:30 UTC>. Keep it about you, and keep it friendly.",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
+    }
+  ],
+  "text": "✍️ It's your turn to write (round 3)!"
+}

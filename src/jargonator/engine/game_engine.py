@@ -17,7 +17,8 @@ from jargonator.clock import Clock
 from jargonator.config import Settings
 from jargonator.db.records import GameRecord
 from jargonator.db.repo import ChannelBusyError, RepoProtocol, UserInOtherGameError
-from jargonator.domain.state import GameState, PlayerStatus
+from jargonator.domain.state import GameEvent, GameState, PlayerStatus, RoundStatus, transition
+from jargonator.domain.turn_order import TurnOrder
 from jargonator.engine.errors import UserFacingError
 from jargonator.engine.scheduler import Scheduler, TimerKind
 from jargonator.llm.tasks import LLMTasks
@@ -26,6 +27,7 @@ from jargonator.slack.gateway import Block, MessageRef, SlackDeliveryError, Slac
 
 log = structlog.get_logger()
 
+MIN_SENTENCE, MAX_SENTENCE = 5, 150
 NOT_IN_CHANNEL_CODES = frozenset({"not_in_channel", "channel_not_found", "is_archived"})
 INVITE_HINT = "I can't post here yet. Invite me with `/invite @Jargonator` first, then try again."
 
@@ -144,8 +146,173 @@ class GameEngine:
             log.info("player_left", game_id=game.id, user_id=user_id)
 
     # ===================================================================================
+    # Starting the game and the writer phase (spec §3.1, §3.3, §3.4)
+    # ===================================================================================
+
+    async def start_game(self, channel_id: str, user_id: str) -> None:
+        game = await self._require_channel_game(channel_id)
+        async with self._lock(game.id):
+            game = await self._reload(game.id)
+            if game.state is not GameState.LOBBY:
+                raise UserFacingError("The game has already started.")
+            self._require_host(game, user_id)
+            active = await self._active_ids(game.id)
+            if len(active) < self.settings.min_players:
+                raise UserFacingError(
+                    f"You need at least {self.settings.min_players} players to start. "
+                    "Ask someone to click Join!"
+                )
+            await self._start(game, active)
+
+    async def on_lobby_deadline(self, game_id: str) -> None:
+        async with self._lock(game_id):
+            game = await self.repo.get_game(game_id)
+            if game is None or game.state is not GameState.LOBBY:
+                return
+            active = await self._active_ids(game_id)
+            if len(active) >= self.settings.min_players:
+                await self._start(game, active)
+
+    async def submit_sentence(self, user_id: str, round_id: str, text: str) -> None:
+        """The writer's sentence (spec §3.4). Moderation runs outside the lock."""
+        sentence = text.strip()
+        rnd = await self.repo.get_round(round_id)
+        if rnd is None:
+            raise UserFacingError("That round is over.")
+        async with self._lock(rnd.game_id):
+            try:
+                await self._validate_sentence(rnd.game_id, round_id, user_id, sentence)
+            except _AlreadySubmitted:
+                return  # a double-submit after the first was accepted: ignore quietly
+
+        verdict = await self.llm.moderate_sentence(sentence)
+
+        async with self._lock(rnd.game_id):
+            try:
+                game = await self._validate_sentence(rnd.game_id, round_id, user_id, sentence)
+            except UserFacingError:
+                log.info("sentence_discarded_stale", round_id=round_id)
+                return  # e.g. a duplicate submission already moved the round on
+            if not verdict.ok:
+                await self._dm(user_id, *blocks.writer_rejected(verdict.reason, round_id))
+                await self._touch(game.id)
+                return
+            await self.repo.update_round(round_id, sentence=sentence, status=RoundStatus.GENERATING)
+            await self.repo.update_player(game.id, user_id, consecutive_misses=0)
+            self.scheduler.cancel(game.id, TimerKind.WRITER_REMINDER)
+            self.scheduler.cancel(game.id, TimerKind.WRITER_DEADLINE)
+            await self._transition(game, GameEvent.SENTENCE_ACCEPTED)
+            await self._dm(user_id, *blocks.writer_accepted(sentence))
+            await self._touch(game.id)
+            log.info("sentence_accepted", game_id=game.id, round_id=round_id)
+
+    async def _validate_sentence(
+        self, game_id: str, round_id: str, user_id: str, sentence: str
+    ) -> GameRecord:
+        game = await self._reload(game_id)
+        rnd = await self.repo.get_current_round(game_id)
+        if (
+            rnd is not None
+            and rnd.id == round_id
+            and rnd.writer_user_id == user_id
+            and rnd.sentence is not None
+        ):
+            raise _AlreadySubmitted("Your sentence is already in.")
+        if (
+            rnd is None
+            or rnd.id != round_id
+            or rnd.status is not RoundStatus.AWAITING_SENTENCE
+            or game.state is not GameState.AWAITING_SENTENCE
+        ):
+            raise UserFacingError("That round is no longer waiting for a sentence.")
+        if rnd.writer_user_id != user_id:
+            raise UserFacingError("It's not your turn to write.")
+        if rnd.writer_deadline is not None and self.clock.now() >= rnd.writer_deadline:
+            raise UserFacingError("⏰ Time's up for this round.")
+        if not MIN_SENTENCE <= len(sentence) <= MAX_SENTENCE:
+            raise UserFacingError(
+                f"Your sentence must be {MIN_SENTENCE}–{MAX_SENTENCE} characters long."
+            )
+        return game
+
+    async def _start(self, game: GameRecord, active: list[str]) -> None:
+        now = self.clock.now()
+        await self.repo.save_turn_order(game.id, TurnOrder.new(active, self.rng))
+        self.scheduler.cancel(game.id, TimerKind.LOBBY)
+        game = await self.repo.update_game(game.id, started_at=now, lobby_deadline=None)
+        log.info("game_started", game_id=game.id, players=len(active))
+        await self._begin_round(game, GameEvent.START)
+        await self._refresh_lobby(await self._reload(game.id))  # drops the Start button
+
+    async def _begin_round(self, game: GameRecord, event: GameEvent) -> None:
+        """Pick the next writer and open a new round (spec §3.3, §3.4)."""
+        now = self.clock.now()
+        order = await self.repo.load_turn_order(game.id)
+        if order is None:
+            raise RuntimeError(f"Game {game.id} has no turn order")
+        writer = order.next_writer(await self._active_ids(game.id), self.rng)
+        if writer is None:
+            raise RuntimeError(f"Game {game.id} has no active players")
+        await self.repo.save_turn_order(game.id, order)
+
+        previous = await self.repo.get_current_round(game.id)
+        deadline = now + timedelta(seconds=game.writer_seconds)
+        reminder_offset = self.settings.writer_reminder_seconds
+        reminder = (
+            deadline - timedelta(seconds=reminder_offset)
+            if reminder_offset < game.writer_seconds
+            else None
+        )
+        rnd = await self.repo.create_round(
+            game_id=game.id,
+            number=(previous.number + 1) if previous else 1,
+            writer_user_id=writer,
+            writer_deadline=deadline,
+            writer_reminder_at=reminder,
+            now=now,
+        )
+        game = await self._transition(game, event)
+        status = await self._post(
+            game.channel_id, *blocks.round_start(rnd.number, writer, deadline)
+        )
+        if status is not None:
+            await self.repo.update_round(rnd.id, status_message_ts=status.ts)
+        await self._dm(writer, *blocks.writer_prompt(rnd.number, deadline, rnd.id))
+        if reminder is not None:
+            self.scheduler.schedule(game.id, TimerKind.WRITER_REMINDER, reminder, rnd.id)
+        self.scheduler.schedule(game.id, TimerKind.WRITER_DEADLINE, deadline, rnd.id)
+        await self._touch(game.id)
+        log.info("round_started", game_id=game.id, round_id=rnd.id, number=rnd.number)
+
+    # ===================================================================================
     # Helpers
     # ===================================================================================
+
+    async def _transition(self, game: GameRecord, event: GameEvent) -> GameRecord:
+        new_state = transition(game.state, event)
+        if new_state is None:
+            raise RuntimeError(f"Invalid transition {game.state} --{event}-->")
+        return await self.repo.update_game(game.id, state=new_state)
+
+    def _require_host(self, game: GameRecord, user_id: str) -> None:
+        if user_id != game.host_user_id:
+            raise UserFacingError(
+                f"Only the host ({blocks.mention(game.host_user_id)}) can do that."
+            )
+
+    async def _active_ids(self, game_id: str) -> list[str]:
+        players = await self.repo.get_players(game_id)
+        return [p.user_id for p in players if p.status is PlayerStatus.ACTIVE]
+
+    async def _dm(
+        self, user_id: str, text: str, message_blocks: Sequence[Block]
+    ) -> MessageRef | None:
+        try:
+            channel = await self.slack.open_dm(user_id)
+        except SlackDeliveryError as exc:
+            log.warning("slack_dm_failed", user_id=user_id, code=exc.code)
+            return None
+        return await self._post(channel, text, message_blocks)
 
     def _lock(self, game_id: str) -> asyncio.Lock:
         return self._locks.setdefault(game_id, asyncio.Lock())
@@ -223,6 +390,10 @@ class GameEngine:
             await self.slack.update_message(ref, text, message_blocks)
         except SlackDeliveryError as exc:
             log.warning("slack_update_failed", channel_id=ref.channel, code=exc.code)
+
+
+class _AlreadySubmitted(UserFacingError):
+    """The writer's sentence for this round was already accepted."""
 
 
 def _in_other_game(game: GameRecord) -> str:

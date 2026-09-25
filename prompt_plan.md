@@ -826,7 +826,7 @@ Final: update DECISIONS.md with anything decided along the way, and confirm all 
 - [x] 10 LLM tasks and prompts
 - [x] 11 Gateway protocol, fake, lobby blocks
 - [x] 12 Engine I: lobby
-- [ ] 13 Engine II: start + writer phase
+- [x] 13 Engine II: start + writer phase
 - [ ] 14 Engine III: generation + distribution
 - [ ] 15 Engine IV: guessing
 - [ ] 16 Engine V: judging + results

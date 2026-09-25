@@ -1,0 +1,28 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "text": "⏰ *30 seconds left* to write your sentence!",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "action_id": "jargonator_write_sentence",
+          "style": "primary",
+          "text": {
+            "emoji": true,
+            "text": "Write sentence",
+            "type": "plain_text"
+          },
+          "type": "button",
+          "value": "round-9"
+        }
+      ],
+      "type": "actions"
+    }
+  ],
+  "text": "⏰ 30 seconds left to write your sentence!"
+}

@@ -1,0 +1,36 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "text": "🙅 *That sentence can't be used.*\nPlease keep it about you.",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "action_id": "jargonator_try_again",
+          "text": {
+            "emoji": true,
+            "text": "Try again",
+            "type": "plain_text"
+          },
+          "type": "button",
+          "value": "round-9"
+        }
+      ],
+      "type": "actions"
+    },
+    {
+      "elements": [
+        {
+          "text": "The clock is still running.",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
+    }
+  ],
+  "text": "🙅 That sentence can't be used: Please keep it about you."
+}

@@ -4,6 +4,7 @@ Every action_id comes from ``slack/ids.py``.
 """
 
 from collections.abc import Sequence
+from datetime import datetime
 
 from jargonator.db.records import GameRecord, PlayerRecord
 from jargonator.domain.state import PlayerStatus
@@ -76,6 +77,66 @@ def lobby(game: GameRecord, players: Sequence[PlayerRecord], started: bool) -> M
     ]
     text = f"💼 Jargonator: {plural(len(active), 'player')}. {status}"
     return text, blocks
+
+
+def deadline_text(when: datetime) -> str:
+    """Slack renders this in each viewer's local time. The fallback is UTC."""
+    return f"<!date^{int(when.timestamp())}^{{time_secs}}|{when:%H:%M:%S} UTC>"
+
+
+# --- round start and the writer's DMs (M2, M3) ----------------------------------------------
+
+
+def round_start(round_no: int, writer_id: str, writer_deadline: datetime) -> Message:
+    """M2: the channel status message for a round (later updated in place)."""
+    text = f"🎤 Round {round_no}: {mention(writer_id)} is writing a sentence…"
+    return text, [
+        _section(f"🎤 *Round {round_no}*: {mention(writer_id)} is writing a sentence…"),
+        _context(f"✍️ Sentence due by {deadline_text(writer_deadline)}"),
+    ]
+
+
+def writer_prompt(round_no: int, deadline: datetime, round_id: str) -> Message:
+    """M3: DM asking the writer for their sentence."""
+    text = f"✍️ It's your turn to write (round {round_no})!"
+    return text, [
+        _section(
+            f"✍️ *It's your turn to write (round {round_no})!*\n"
+            "Write one *simple, true sentence about yourself*. The AI will turn it into "
+            "corporate jargon, and everyone else will try to guess the original.\n"
+            "_Example: I ran a marathon last year._"
+        ),
+        {
+            "type": "actions",
+            "elements": [_button("Write sentence", ids.WRITE_SENTENCE, round_id, style="primary")],
+        },
+        _context(f"⏱️ Due by {deadline_text(deadline)}. Keep it about you, and keep it friendly."),
+    ]
+
+
+def writer_rejected(reason: str, round_id: str) -> Message:
+    text = f"🙅 That sentence can't be used: {reason}"
+    return text, [
+        _section(f"🙅 *That sentence can't be used.*\n{reason}"),
+        {"type": "actions", "elements": [_button("Try again", ids.TRY_AGAIN, round_id)]},
+        _context("The clock is still running."),
+    ]
+
+
+def writer_reminder(seconds_left: int, round_id: str) -> Message:
+    text = f"⏰ {seconds_left} seconds left to write your sentence!"
+    return text, [
+        _section(f"⏰ *{seconds_left} seconds left* to write your sentence!"),
+        {
+            "type": "actions",
+            "elements": [_button("Write sentence", ids.WRITE_SENTENCE, round_id, style="primary")],
+        },
+    ]
+
+
+def writer_accepted(sentence: str) -> Message:
+    text = f"✅ Got it: “{sentence}”. Turning it into jargon…"
+    return text, [_section(text)]
 
 
 def notice(text: str) -> Message:
