@@ -61,10 +61,18 @@ class CompletionsAPI(Protocol):
 
 
 def extract_json(content: str) -> str:
-    """Strip whitespace and a Markdown code fence, which some models add despite JSON mode."""
+    """Pull the JSON object out of a reply.
+
+    Handles a Markdown code fence and surrounding chatter (e.g. "Here is the JSON: {...}"
+    or a <think> block), which models without JSON mode tend to add. If no braces are
+    found the text is returned as-is, and parsing then fails and is retried.
+    """
     text = content.strip()
     match = _FENCE.match(text)
-    return match.group(1) if match else text
+    if match:
+        return match.group(1)
+    start, end = text.find("{"), text.rfind("}")
+    return text[start : end + 1] if 0 <= start < end else text
 
 
 def _is_retryable(exc: Exception) -> bool:

@@ -5,6 +5,7 @@ Needs OPENROUTER_API_KEY in the environment or in .env. Slack tokens are not nee
     uv run python scripts/try_llm.py
     uv run python scripts/try_llm.py "I ran a marathon last year" "I jog" "I like cake"
     uv run python scripts/try_llm.py --level unhinged "I have two cats" "I own kitties"
+    uv run python scripts/try_llm.py --model nvidia/nemotron-3-super-120b-a12b
 
 Each run makes about 6 small LLM calls (a fraction of a cent with the default models).
 """
@@ -41,6 +42,12 @@ def parse_args() -> argparse.Namespace:
         choices=[lvl.value for lvl in JargonLevel],
         help="only generate this jargon level (default: all three)",
     )
+    parser.add_argument(
+        "--model",
+        help="use this OpenRouter model for every task (overrides .env), "
+        "e.g. nvidia/nemotron-3-super-120b-a12b",
+    )
+    parser.add_argument("--fallback", help="use this model as the fallback (overrides .env)")
     parser.add_argument("--verbose", action="store_true", help="show one log line per LLM attempt")
     return parser.parse_args()
 
@@ -50,7 +57,13 @@ async def main() -> None:
     guesses = args.guesses or DEFAULT_GUESSES
     configure_logging("INFO" if args.verbose else "ERROR")
     # Slack tokens are required by Settings but unused here.
-    settings = Settings(slack_bot_token="unused", slack_app_token="unused")
+    overrides: dict[str, str] = {"slack_bot_token": "unused", "slack_app_token": "unused"}
+    if args.model:  # beats both LLM_MODEL and the per-task settings from .env
+        for task in ("jargon", "judge", "quip", "moderation"):
+            overrides[f"llm_model_{task}"] = args.model
+    if args.fallback:
+        overrides["llm_model_fallback"] = args.fallback
+    settings = Settings(**overrides)  # type: ignore[arg-type]
     client = build_openrouter_client(settings)
     tasks = OpenRouterTasks(client)
 

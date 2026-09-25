@@ -60,3 +60,5 @@ Decisions made during implementation that `spec.md` does not cover.
 | 2026-09-25 | The quip is truncated to 25 words with a trailing "…". A blank quip becomes `None` (no quip block) | Spec §7.5 word limit. Never post an empty line. |
 | 2026-09-25 | `mypy --strict` now also checks `tests/fakes/` | The fakes stand in for real components in every engine test, so they must provably match the protocols (e.g. `FakeLLM` vs `LLMTasks`). |
 | 2026-09-25 | The fake OpenAI connection moved to `tests/fakes/openai_stub.py` | Shared by the client and tasks tests. |
+| 2026-09-25 | Optional `LLM_MODEL` setting switches every per-task model at once. Explicitly set per-task models win, and the fallback is untouched | The user wanted to switch to NVIDIA Nemotron easily. Keeping the fallback on another vendor means an outage at one provider doesn't take out both. |
+| 2026-09-25 | `extract_json` also extracts the `{...}` object from surrounding text (chatter, `<think>` blocks), not just code fences | Some OpenRouter models (e.g. free Nemotron variants) don't support JSON mode, and OpenRouter silently ignores unsupported params. |

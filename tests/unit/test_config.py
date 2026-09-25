@@ -91,3 +91,31 @@ def test_secrets_not_exposed_in_repr(required_env: dict[str, str]) -> None:
 def test_removed_v1_settings_are_gone(required_env: dict[str, str]) -> None:
     fields = set(Settings.model_fields)
     assert not {"embedding_model", "tie_margin", "llm_model_tiebreak"} & fields
+
+
+def test_llm_model_sets_every_task_model(
+    required_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LLM_MODEL", "nvidia/nemotron-3-super-120b-a12b")
+    s = make_settings()
+    assert s.llm_model_jargon == "nvidia/nemotron-3-super-120b-a12b"
+    assert s.llm_model_judge == "nvidia/nemotron-3-super-120b-a12b"
+    assert s.llm_model_quip == "nvidia/nemotron-3-super-120b-a12b"
+    assert s.llm_model_moderation == "nvidia/nemotron-3-super-120b-a12b"
+    # The fallback stays on a different vendor unless set explicitly.
+    assert s.llm_model_fallback == "openai/gpt-4o-mini"
+
+
+def test_per_task_model_overrides_llm_model(
+    required_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LLM_MODEL", "nvidia/nemotron-3-super-120b-a12b")
+    monkeypatch.setenv("LLM_MODEL_JUDGE", "anthropic/claude-sonnet-5")
+    s = make_settings()
+    assert s.llm_model_judge == "anthropic/claude-sonnet-5"
+    assert s.llm_model_jargon == "nvidia/nemotron-3-super-120b-a12b"
+
+
+def test_llm_model_via_init_kwargs(required_env: dict[str, str]) -> None:
+    s = Settings(_env_file=None, llm_model="nvidia/nemotron-3-nano-30b-a3b")  # type: ignore[call-arg]
+    assert s.llm_model_moderation == "nvidia/nemotron-3-nano-30b-a3b"

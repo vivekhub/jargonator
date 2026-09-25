@@ -205,6 +205,14 @@ async def test_validate_failure_everywhere_raises_llm_error() -> None:
     assert len(stub.calls) == 4
 
 
+async def test_json_with_surrounding_text_is_accepted() -> None:
+    """Models without JSON mode (e.g. some free Nemotron variants) add chatter."""
+    stub = StubCompletions(completion('Here you go: {"answer": "chatty"} Enjoy!'))
+    client, sleeps = make_client(stub)
+    assert (await call(client)).answer == "chatty"
+    assert sleeps.durations == []
+
+
 async def test_code_fenced_json_is_accepted() -> None:
     stub = StubCompletions(completion('```json\n{"answer": "fenced"}\n```'))
     client, sleeps = make_client(stub)
@@ -218,6 +226,9 @@ async def test_code_fenced_json_is_accepted() -> None:
         ('{"a": 1}', '{"a": 1}'),
         ('  ```json\n{"a": 1}\n```  ', '{"a": 1}'),
         ('```\n{"a": 1}\n```', '{"a": 1}'),
+        ('Sure! Here is the JSON:\n{"a": {"b": 2}}\nHope that helps.', '{"a": {"b": 2}}'),
+        ('<think>hmm</think>\n```json\n{"a": 1}\n```', '{"a": 1}'),
+        ("no json here", "no json here"),
     ],
 )
 def test_extract_json(raw: str, expected: str) -> None:

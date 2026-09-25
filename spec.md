@@ -265,7 +265,7 @@ A single command `/jargonator` with subcommands. Unknown subcommand → help.
 - OpenAI SDK with `base_url` `https://openrouter.ai/api/v1`, and headers `HTTP-Referer` and `X-Title: Jargonator`.
 - **Per-task models** (env): `LLM_MODEL_JARGON`, `LLM_MODEL_JUDGE`, `LLM_MODEL_QUIP` (default `anthropic/claude-sonnet-5`), `LLM_MODEL_MODERATION` (default `anthropic/claude-haiku-4.5`), and `LLM_MODEL_FALLBACK` (used for any task when the primary fails). The judge defaults to the stronger model because fair scoring is the core of the game.
 - Timeouts: 15 s per call. Retries: 2 with exponential backoff (0.5 s, 1.5 s) on timeouts/5xx/429, then one attempt on the fallback model.
-- All structured tasks request JSON (`response_format={"type":"json_object"}`) and are **validated with Pydantic**. A parse failure counts as a failed attempt.
+- All structured tasks request JSON (`response_format={"type":"json_object"}`) and are **validated with Pydantic**. A parse failure counts as a failed attempt. The JSON object is extracted from any surrounding text or code fence first, so models without JSON mode also work.
 - Log model, latency, and token usage per call. **Never log full user sentences at INFO**, only at DEBUG.
 - All user text is inserted into prompts inside clearly delimited tags (`<sentence>…</sentence>`), and system prompts instruct the model to treat tag contents as data, never instructions (prompt-injection hardening).
 
@@ -392,6 +392,7 @@ guesses
 | `SLACK_BOT_TOKEN` | — | required |
 | `SLACK_APP_TOKEN` | — | required, Socket Mode |
 | `OPENROUTER_API_KEY` | — | required |
+| `LLM_MODEL` | — | optional shortcut: sets every per-task model below unless that one is set explicitly (not the fallback) |
 | `LLM_MODEL_JARGON` | `anthropic/claude-sonnet-5` | |
 | `LLM_MODEL_JUDGE` | `anthropic/claude-sonnet-5` | |
 | `LLM_MODEL_QUIP` | `anthropic/claude-sonnet-5` | |

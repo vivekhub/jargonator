@@ -2,11 +2,19 @@
 
 from typing import Annotated
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PositiveInt = Annotated[int, Field(gt=0)]
 JudgeScore = Annotated[int, Field(ge=0, le=100)]
+
+
+_TASK_MODEL_FIELDS = (
+    "llm_model_jargon",
+    "llm_model_judge",
+    "llm_model_quip",
+    "llm_model_moderation",
+)
 
 
 class Settings(BaseSettings):
@@ -20,6 +28,9 @@ class Settings(BaseSettings):
     openrouter_api_key: SecretStr
 
     # LLM (spec §7.1)
+    llm_model: str | None = None
+    """Optional shortcut: sets every per-task model below unless that one is set explicitly.
+    The fallback is deliberately not affected, so it can stay on a different vendor."""
     llm_model_jargon: str = "anthropic/claude-sonnet-5"
     llm_model_judge: str = "anthropic/claude-sonnet-5"
     llm_model_quip: str = "anthropic/claude-sonnet-5"
@@ -53,6 +64,14 @@ class Settings(BaseSettings):
     # Operations (spec §14)
     log_level: str = "INFO"
     health_port: Annotated[int, Field(gt=0, lt=65536)] = 8080
+
+    @model_validator(mode="after")
+    def _apply_llm_model(self) -> "Settings":
+        if self.llm_model:
+            for name in _TASK_MODEL_FIELDS:
+                if name not in self.model_fields_set:
+                    setattr(self, name, self.llm_model)
+        return self
 
     @property
     def points_by_rank(self) -> tuple[int, int, int]:
