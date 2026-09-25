@@ -15,6 +15,14 @@ def test_main_logs_startup(
 ) -> None:
     monkeypatch.chdir(tmp_path)  # type: ignore[arg-type]  # ensure no stray .env is read
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path}/main.db")
+    from jargonator import main as main_module
+
+    async def fake_run(settings: object) -> None:
+        import structlog
+
+        structlog.get_logger().info("container_ready")
+
+    monkeypatch.setattr(main_module, "run", fake_run)
     main()
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
     startup = [line for line in lines if line["event"] == "startup"]
