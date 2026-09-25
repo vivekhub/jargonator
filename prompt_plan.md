@@ -824,7 +824,7 @@ Final: update DECISIONS.md with anything decided along the way, and confirm all 
 - [x] 8 (removed in v1.1; embedding code deleted)
 - [x] 9 LLM client
 - [x] 10 LLM tasks and prompts
-- [ ] 11 Gateway protocol, fake, lobby blocks
+- [x] 11 Gateway protocol, fake, lobby blocks
 - [ ] 12 Engine I: lobby
 - [ ] 13 Engine II: start + writer phase
 - [ ] 14 Engine III: generation + distribution

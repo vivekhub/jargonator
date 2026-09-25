@@ -1,0 +1,52 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "emoji": true,
+        "text": "💼 Jargonator",
+        "type": "plain_text"
+      },
+      "type": "header"
+    },
+    {
+      "text": {
+        "text": "Decode your colleagues' corporate jargon! Each round one player writes a simple sentence about themselves, the AI buzzword-ifies it, and everyone else guesses the original.\n*Host:* <@U1> · Game in progress. Jump in any time!",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "text": "⏱️ Guess time 60 s · ✍️ Writer time 90 s",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
+    },
+    {
+      "text": {
+        "text": "*Players (3)*\n• 👑 <@U1>\n• <@U2>\n• <@U3>",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "action_id": "jargonator_join",
+          "style": "primary",
+          "text": {
+            "emoji": true,
+            "text": "🙋 Join",
+            "type": "plain_text"
+          },
+          "type": "button",
+          "value": "game-1"
+        }
+      ],
+      "type": "actions"
+    }
+  ],
+  "text": "💼 Jargonator: 3 players. Game in progress. Jump in any time!"
+}

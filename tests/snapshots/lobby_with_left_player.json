@@ -1,0 +1,62 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "emoji": true,
+        "text": "💼 Jargonator",
+        "type": "plain_text"
+      },
+      "type": "header"
+    },
+    {
+      "text": {
+        "text": "Decode your colleagues' corporate jargon! Each round one player writes a simple sentence about themselves, the AI buzzword-ifies it, and everyone else guesses the original.\n*Host:* <@U1> · Waiting for players…",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "text": "⏱️ Guess time 60 s · ✍️ Writer time 90 s",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
+    },
+    {
+      "text": {
+        "text": "*Players (1)*\n• 👑 <@U1>\n• <@U2> — left\n• <@U3> — inactive",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "action_id": "jargonator_join",
+          "style": "primary",
+          "text": {
+            "emoji": true,
+            "text": "🙋 Join",
+            "type": "plain_text"
+          },
+          "type": "button",
+          "value": "game-1"
+        },
+        {
+          "action_id": "jargonator_start",
+          "text": {
+            "emoji": true,
+            "text": "🚀 Start game",
+            "type": "plain_text"
+          },
+          "type": "button",
+          "value": "game-1"
+        }
+      ],
+      "type": "actions"
+    }
+  ],
+  "text": "💼 Jargonator: 1 player. Waiting for players…"
+}
