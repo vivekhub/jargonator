@@ -140,6 +140,16 @@ async def test_add_and_get_guesses(repo: Repo) -> None:
     assert first.score is None and first.rank is None and first.points == 0
 
 
+async def test_guesses_with_identical_timestamps_keep_insertion_order(repo: Repo) -> None:
+    """Review finding 3: ties must not be broken by random uuids."""
+    game_id = await new_game(repo)
+    round_id = await new_round(repo, game_id)
+    users = [f"U{i}" for i in range(2, 12)]
+    for user in users:
+        await repo.add_guess(round_id, user, "same instant", NOW)
+    assert [g.user_id for g in await repo.get_guesses(round_id)] == users
+
+
 async def test_duplicate_guess_raises(repo: Repo) -> None:
     game_id = await new_game(repo)
     round_id = await new_round(repo, game_id)

@@ -25,6 +25,17 @@ def test_models_match_migrated_schema(db_url: str) -> None:
     assert diffs == []
 
 
+def test_active_channel_index_is_partial(db_url: str) -> None:
+    engine = sa.create_engine(sync_url(db_url))
+    with engine.connect() as conn:
+        sql = conn.exec_driver_sql(
+            "SELECT sql FROM sqlite_master WHERE name = 'uq_games_active_channel'"
+        ).scalar_one()
+    engine.dispose()
+    assert "UNIQUE" in sql.upper()
+    assert "WHERE state != 'ENDED'" in sql
+
+
 def test_migrations_are_idempotent(db_url: str) -> None:
     run_migrations(db_url)  # already at head: must be a no-op
 

@@ -1,4 +1,6 @@
+import asyncio
 import json
+import time
 from typing import Any
 
 import httpx2
@@ -189,6 +191,64 @@ async def test_fallback_failure_is_not_retried() -> None:
     with pytest.raises(LLMError):
         await call(client)
     assert len(stub.calls) == 2
+
+
+class HangingCompletions:
+    """Never answers, like a server trickling keep-alive bytes (review finding 2)."""
+
+    def __init__(self, then: ChatCompletion | None = None) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.then = then
+
+    async def create(self, **kwargs: Any) -> ChatCompletion:
+        self.calls.append(kwargs)
+        if self.then is not None and kwargs["model"] == "fallback/model":
+            return self.then
+        await asyncio.sleep(3600)
+        raise AssertionError("unreachable")
+
+
+async def test_total_timeout_bounds_each_attempt() -> None:
+    stub = HangingCompletions(then=ok("fb"))
+    sleeps = Sleeps()
+    client = OpenRouterClient(
+        stub, models=MODELS, fallback_model="fallback/model", timeout=0.05, sleep=sleeps
+    )
+    started = time.perf_counter()
+    assert (await call(client)).answer == "fb"
+    assert time.perf_counter() - started < 2
+    assert [c["model"] for c in stub.calls] == ["primary/jargon"] * 3 + ["fallback/model"]
+    assert sleeps.durations == [0.5, 1.5]  # timeouts are retryable
+
+
+async def test_validate_callback_failure_is_retried() -> None:
+    """Review finding 5: per-call semantic checks must count as failed attempts."""
+    stub = StubCompletions(ok("wrong"), ok("right"))
+    client, sleeps = make_client(stub)
+
+    def must_be_right(result: Answer) -> None:
+        if result.answer != "right":
+            raise ValueError("not right")
+
+    result = await client.complete_json(
+        LLMTask.JUDGE, system="s", user="u", schema=Answer, temperature=0, validate=must_be_right
+    )
+    assert result.answer == "right"
+    assert sleeps.durations == [0.5]
+
+
+async def test_validate_failure_everywhere_raises_llm_error() -> None:
+    stub = StubCompletions(*(ok("wrong") for _ in range(4)))
+    client, _ = make_client(stub)
+
+    def never(_: Answer) -> None:
+        raise ValueError("no")
+
+    with pytest.raises(LLMError):
+        await client.complete_json(
+            LLMTask.JUDGE, system="s", user="u", schema=Answer, temperature=0, validate=never
+        )
+    assert len(stub.calls) == 4
 
 
 async def test_code_fenced_json_is_accepted() -> None:

@@ -132,6 +132,17 @@ def test_rows_round_trip() -> None:
     assert restored == order
 
 
+def test_skipped_player_rejoining_mid_cycle_round_trips() -> None:
+    r = rng()
+    order = TurnOrder.new(["a", "b", "c"], r)
+    skipped = order.queue[1]
+    order.next_writer({"a", "b", "c"} - {skipped}, r)  # first writer
+    order.next_writer({"a", "b", "c"} - {skipped}, r)  # skips `skipped`, pops the third
+    order.append(skipped)  # comes back: not written this cycle, so re-queued
+    assert order.queue == [skipped]
+    assert TurnOrder.from_rows(order.to_rows(), order.last_writer) == order
+
+
 def test_rows_format() -> None:
     r = rng()
     order = TurnOrder.new(["a", "b"], r)

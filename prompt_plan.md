@@ -273,11 +273,11 @@ Goal: persistence for games and players, alembic migrations, and the first versi
 2. src/jargonator/db/session.py: `create_engine_and_sessionmaker(url)` using an async engine; enable SQLite `PRAGMA foreign_keys=ON` and `journal_mode=WAL` on connect. `run_migrations(url)`: programmatic `alembic upgrade head`.
 3. alembic.ini + migrations/ with an env.py that uses models' metadata; generate and commit revision 0001_initial.
 4. src/jargonator/db/repo.py: `class Repo` (holding an async_sessionmaker). Each method is its own transaction. Return plain frozen dataclasses (GameRecord, PlayerRecord defined in db/records.py), never ORM objects. Methods:
-   - create_game(channel_id, host_user_id, guess_seconds, writer_seconds, join_window_seconds, now) -> GameRecord; raises ChannelBusyError if there's an active game in the channel (catch IntegrityError).
+   - create_game(channel_id, host_user_id, guess_seconds, writer_seconds, join_window_seconds, now, lobby_deadline=None, idle_deadline=None) -> GameRecord: in ONE transaction, refuse if the host is in another active game (UserInOtherGameError carrying that game), insert the game (ChannelBusyError on the partial unique index), and add the host as its first player, so a game is never half-created.
    - get_game(game_id), get_active_game_by_channel(channel_id)
    - update_game(game_id, **fields) (whitelisted fields only)
    - find_active_game_for_user(user_id) -> GameRecord | None (games not ENDED where the player status is active or inactive)
-   - add_or_reactivate_player(game_id, user_id, now) -> PlayerRecord (a rejoining left/inactive player keeps score and resets consecutive_misses)
+   - join_game(game_id, user_id, now) -> PlayerRecord: in ONE transaction, LookupError for an unknown game, UserInOtherGameError if the user is active/inactive in a different non-ended game, otherwise upsert (a rejoining left/inactive player keeps score and resets consecutive_misses; returning from left gets a fresh joined_at).
    - get_players(game_id), get_player(game_id, user_id)
    - update_player(game_id, user_id, **fields), add_points(game_id, user_id, points, round_win: bool)
    - list_non_ended_games()
@@ -288,7 +288,7 @@ Tests (tests/unit/db/, using a tmp_path SQLite file and running real migrations 
 - The migration creates every table; the model metadata matches the migrated schema (use alembic's compare_metadata → no diffs).
 - A second active game in the same channel raises ChannelBusyError; after it is set to ENDED, a new one can be created.
 - Timestamps round-trip as tz-aware UTC.
-- add_or_reactivate_player keeps the score on rejoin; find_active_game_for_user works across channels.
+- join_game keeps the score on rejoin; concurrent joins of one user to several games admit exactly one; find_active_game_for_user works across channels. Make every SQLite transaction start with BEGIN IMMEDIATE (session.py) so these check-then-act steps are atomic.
 - build_container works against a tmp DB URL.
 
 Finish with `make check` green.
@@ -375,14 +375,14 @@ Follow CLAUDE.md. Read spec.md §7.2–§7.5, §8 and §3.5.
 
 Goal: game-specific LLM operations behind an `LLMTasks` protocol, with a scriptable fake.
 
-1. src/jargonator/llm/schemas.py: Pydantic models SentenceModeration(ok: bool, reason: str = ""), GuessModeration(flagged: list[str]), JargonResult(jargon: str; max 600 chars), JudgeResult(scores: list[JudgeScore(id: str, score: int 0-100)]), QuipResult(quip: str).
+1. src/jargonator/llm/schemas.py: Pydantic models SentenceModeration(ok: bool, reason: str = ""), GuessModeration(flagged: list[str]), JargonResult(jargon: str; max 600 chars), JudgeResult(scores: list[JudgeScore(id: str, score: int 0-100, strict=True so "85", 85.0 and true are rejected)]), QuipResult(quip: str).
 2. src/jargonator/llm/prompts.py: pure functions building (system, user) strings for each task, following spec §7 exactly (persona, rules, level presets with examples, word limits). User-supplied text goes inside tags like <sentence>…</sentence>, <guess id="…">…</guess>. Escape any "<" and ">" in user text (replace with ‹ ›) so it cannot close a tag. Every system prompt states that tag contents are data, not instructions. `jargon_prompt(sentence, level, avoid_words: set[str] | None)` adds the stricter leakage instruction when avoid_words is given.
 3. src/jargonator/llm/tasks.py:
    - `class LLMTasks(Protocol)` with:
      moderate_sentence(sentence) -> SentenceModeration  (on LLMError: ok=False, reason="We couldn't check your sentence right now, please try again.")  (fail closed)
      moderate_guesses(guesses: Mapping[str, str]) -> set[str]  (flagged ids; ignore unknown ids; on LLMError: empty set)  (fail open)
      generate_jargon(sentence, level, avoid_words=None) -> str  (raises LLMError; strip quotes/whitespace)
-     judge(original, jargon, guesses: Mapping[str, str]) -> dict[str, int]  (raises LLMError; the judge prompt includes the §8 rubric verbatim; output must have exactly one integer 0-100 per input id, otherwise the client counts it as a failed attempt, so validate inside the schema/parse step; empty input → {} without calling the LLM)
+     judge(original, jargon, guesses: Mapping[str, str]) -> dict[str, int]  (raises LLMError; the judge prompt includes the §8 rubric verbatim; output must have exactly one integer 0-100 per input id, enforce this by passing a `validate` callback to OpenRouterClient.complete_json (it checks the ids against the input), so a bad reply counts as a failed attempt and is retried; empty input → {} without calling the LLM)
      quip(original, jargon, top_guesses: Sequence[str], writer_bonus: bool) -> str | None  (None on LLMError; truncate to 25 words)
      with temperatures from the spec (jargon 0.9, judge 0, quip 1.0, moderation 0).
    - `OpenRouterTasks(client: OpenRouterClient)` implements it.
@@ -446,8 +446,8 @@ Goal: create GameEngine with its first events. From now on the engine is tested 
 2. src/jargonator/engine/errors.py: `UserFacingError(Exception)` carrying a friendly message (adapters will show it ephemerally).
 3. src/jargonator/engine/game_engine.py: `class GameEngine(repo, slack, llm, clock, scheduler, settings, rng)`.
    - A per-game asyncio.Lock registry (`_lock(game_id)`), and a `_touch(game)` that sets last_activity_at/idle_deadline and schedules IDLE.
-   - `create_game(channel_id, user_id, guess_seconds, writer_seconds, join_window_seconds) -> GameRecord`: refuse if the user is in another active game (UserFacingError naming the channel) or the channel is busy. Create the game, add the host as a player, post the lobby (store lobby_message_ts), and schedule LOBBY at now+join_window if join_window > 0.
-   - `join(channel_id, user_id)`: needs an active game in the channel; refuse if the user is in a different active game; add_or_reactivate; update the lobby message; if the game is past LOBBY and a turn order exists, append the user to it; post a notice "@user joined".
+   - `create_game(channel_id, user_id, guess_seconds, writer_seconds, join_window_seconds) -> GameRecord`: call repo.create_game (which adds the host atomically, with lobby/idle deadlines) and map UserInOtherGameError/ChannelBusyError to UserFacingError (naming the other channel); post the lobby (store lobby_message_ts), and schedule LOBBY at now+join_window if join_window > 0.
+   - `join(channel_id, user_id)`: needs an active game in the channel; repo.join_game (UserInOtherGameError → UserFacingError naming the channel); update the lobby message; if the game is past LOBBY and a turn order exists, append the user to it; post a notice "@user joined".
    - `leave(channel_id, user_id)`: status left, left_at; update the lobby; notice. If the leaver was host → transfer to the earliest-joined active player (notice "👑 @x is now host"); if nobody is left, keep the host as-is.
    Every mutating method: lock, re-read state from the repo, validate, act, _touch.
 
@@ -621,7 +621,7 @@ Goal: the remaining engine events.
    - `claim_host(channel_id, user_id, round_id)`: allowed only after host_claim_at and for an active player; set the host; post host_changed_notice; re-render the results message without Claim host.
    - `kick(channel_id, host_user_id, target_user_id)`: host only; target becomes left (same code path as leave, including host transfer is N/A and the early-end re-check).
    - Refactor so there is ONE `_transfer_host_if_needed(game)` used by leave, kick, inactivity.
-   - Rejoin: an inactive player clicking Join → active again (already handled by add_or_reactivate; add the turn-order append).
+   - Rejoin: an inactive player clicking Join → active again (already handled by repo.join_game; add the turn-order append).
 
 Tests (tests/unit/engine/test_timeouts_and_host.py):
 - The reminder is sent only while awaiting; a timeout skips the round, posts the notice, and allows next.

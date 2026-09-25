@@ -24,6 +24,7 @@ class SystemClock:
         return datetime.now(UTC)
 
     async def sleep_until(self, when: datetime) -> None:
-        delay = (when - self.now()).total_seconds()
-        if delay > 0:
+        # Loop: asyncio.sleep runs on the monotonic clock, so a wall-clock adjustment (NTP)
+        # during a long wait could otherwise wake us before ``when``.
+        while (delay := (when - self.now()).total_seconds()) > 0:  # noqa: ASYNC110 (not polling)
             await asyncio.sleep(delay)

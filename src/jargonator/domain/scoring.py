@@ -46,7 +46,11 @@ class ScoringRules:
 
 
 def sort_valid(guesses: Sequence[GuessInput]) -> list[GuessInput]:
-    """Drop moderated guesses, then sort by score (desc). Exact ties go to the earlier guess."""
+    """Drop moderated guesses, then sort by score (desc). Exact ties go to the earlier guess.
+
+    The sort is stable: pass guesses in submission order (as ``Repo.get_guesses`` returns
+    them), so guesses with identical scores and timestamps keep that order.
+    """
     valid = [x for x in guesses if not x.moderated_out]
     return sorted(valid, key=lambda x: (-x.score, x.submitted_at))
 

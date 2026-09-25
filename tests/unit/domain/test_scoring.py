@@ -49,6 +49,11 @@ def test_exact_tie_goes_to_earlier_submission() -> None:
     assert ranks(out.placements) == [("early", 1, 10), ("late", 2, 5), ("c", 3, 1)]
 
 
+def test_identical_score_and_time_keeps_input_order() -> None:
+    out = score_round([g("first", 70), g("second", 70), g("third", 70)], RULES)
+    assert [p.guess_id for p in out.placements] == ["first", "second", "third"]
+
+
 def test_moderated_guesses_get_no_rank_or_points() -> None:
     out = score_round([g("a", 99, moderated=True), g("b", 60), g("c", 55)], RULES)
     assert ranks(out.placements) == [("b", 1, 10), ("c", 2, 5), ("a", None, 0)]

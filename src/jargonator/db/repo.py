@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, NamedTuple, Protocol
 
-from sqlalchemy import case, delete, select, update
+from sqlalchemy import case, delete, literal_column, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -27,6 +27,14 @@ from jargonator.domain.turn_order import TurnOrder
 
 class ChannelBusyError(Exception):
     """The channel already has an active game (spec §3.2)."""
+
+
+class UserInOtherGameError(Exception):
+    """The user is already active (or inactive) in another game (spec §3.2)."""
+
+    def __init__(self, game: GameRecord) -> None:
+        super().__init__(f"User is already in the game in {game.channel_id}")
+        self.game = game
 
 
 class DuplicateGuessError(Exception):
@@ -87,6 +95,8 @@ class RepoProtocol(Protocol):
         writer_seconds: int,
         join_window_seconds: int,
         now: datetime,
+        lobby_deadline: datetime | None = None,
+        idle_deadline: datetime | None = None,
     ) -> GameRecord: ...
 
     async def get_game(self, game_id: str) -> GameRecord | None: ...
@@ -99,9 +109,7 @@ class RepoProtocol(Protocol):
 
     async def list_non_ended_games(self) -> list[GameRecord]: ...
 
-    async def add_or_reactivate_player(
-        self, game_id: str, user_id: str, now: datetime
-    ) -> PlayerRecord: ...
+    async def join_game(self, game_id: str, user_id: str, now: datetime) -> PlayerRecord: ...
 
     async def get_players(self, game_id: str) -> list[PlayerRecord]: ...
 
@@ -247,7 +255,14 @@ class Repo:
         writer_seconds: int,
         join_window_seconds: int,
         now: datetime,
+        lobby_deadline: datetime | None = None,
+        idle_deadline: datetime | None = None,
     ) -> GameRecord:
+        """Create a LOBBY game with the host as its first player, in one transaction.
+
+        Raises ``UserInOtherGameError`` if the host is in another game, and
+        ``ChannelBusyError`` if the channel already has an active game.
+        """
         game = Game(
             id=str(uuid.uuid4()),
             channel_id=channel_id,
@@ -259,15 +274,21 @@ class Repo:
             join_window_seconds=join_window_seconds,
             created_at=now,
             last_activity_at=now,
+            lobby_deadline=lobby_deadline,
+            idle_deadline=idle_deadline,
         )
-        try:
-            async with self._sessionmaker.begin() as session:
-                session.add(game)
+        async with self._sessionmaker.begin() as session:
+            other = await self._active_game_for_user(session, host_user_id)
+            if other is not None:
+                raise UserInOtherGameError(_game_record(other))
+            session.add(game)
+            try:
                 await session.flush()
-                await session.refresh(game)
-                return _game_record(game)
-        except IntegrityError as exc:
-            raise ChannelBusyError(channel_id) from exc
+            except IntegrityError as exc:
+                raise ChannelBusyError(channel_id) from exc
+            await session.execute(self._upsert_player_stmt(game.id, host_user_id, now))
+            await session.refresh(game)
+            return _game_record(game)
 
     async def get_game(self, game_id: str) -> GameRecord | None:
         async with self._sessionmaker() as session:
@@ -295,16 +316,7 @@ class Repo:
 
     async def find_active_game_for_user(self, user_id: str) -> GameRecord | None:
         async with self._sessionmaker() as session:
-            game = await session.scalar(
-                select(Game)
-                .join(Player, Player.game_id == Game.id)
-                .where(
-                    Player.user_id == user_id,
-                    Player.status.in_([PlayerStatus.ACTIVE, PlayerStatus.INACTIVE]),
-                    Game.state != GameState.ENDED,
-                )
-                .limit(1)
-            )
+            game = await self._active_game_for_user(session, user_id)
             return _game_record(game) if game else None
 
     async def list_non_ended_games(self) -> list[GameRecord]:
@@ -316,15 +328,25 @@ class Repo:
 
     # --- players ----------------------------------------------------------------------
 
-    async def add_or_reactivate_player(
-        self, game_id: str, user_id: str, now: datetime
-    ) -> PlayerRecord:
-        """Add a player, or reactivate one who left or went inactive.
+    async def join_game(self, game_id: str, user_id: str, now: datetime) -> PlayerRecord:
+        """Add a player, or reactivate one who left or went inactive, atomically.
 
-        Score and round wins are kept. Misses reset. A player returning from ``left``
-        gets a fresh ``joined_at``, so they don't count as longest-standing for host
-        transfer (spec §3.10).
+        Raises ``UserInOtherGameError`` if the user is in a different active game, and
+        ``LookupError`` for an unknown game. Score and round wins are kept. Misses reset
+        (unless already active). A player returning from ``left`` gets a fresh
+        ``joined_at``, so they don't count as longest-standing for host transfer (§3.10).
         """
+        async with self._sessionmaker.begin() as session:
+            if await session.get(Game, game_id) is None:
+                raise LookupError(f"Game {game_id} not found")
+            other = await self._active_game_for_user(session, user_id, exclude_game_id=game_id)
+            if other is not None:
+                raise UserInOtherGameError(_game_record(other))
+            await session.execute(self._upsert_player_stmt(game_id, user_id, now))
+            return await self._require_player(session, game_id, user_id)
+
+    @staticmethod
+    def _upsert_player_stmt(game_id: str, user_id: str, now: datetime) -> Any:
         stmt = sqlite_insert(Player).values(
             game_id=game_id,
             user_id=user_id,
@@ -349,9 +371,7 @@ class Repo:
                 "left_at": None,
             },
         )
-        async with self._sessionmaker.begin() as session:
-            await session.execute(stmt)
-            return await self._require_player(session, game_id, user_id)
+        return stmt
 
     async def get_players(self, game_id: str) -> list[PlayerRecord]:
         async with self._sessionmaker() as session:
@@ -511,7 +531,8 @@ class Repo:
             guesses = await session.scalars(
                 select(Guess)
                 .where(Guess.round_id == round_id)
-                .order_by(Guess.submitted_at, Guess.id)
+                # rowid = insertion order, so identical timestamps stay deterministic
+                .order_by(Guess.submitted_at, literal_column("guesses.rowid"))
             )
             return [_guess_record(g) for g in guesses]
 
@@ -567,6 +588,25 @@ class Repo:
             )
 
     # --- helpers ----------------------------------------------------------------------
+
+    @staticmethod
+    async def _active_game_for_user(
+        session: AsyncSession, user_id: str, exclude_game_id: str | None = None
+    ) -> Game | None:
+        stmt = (
+            select(Game)
+            .join(Player, Player.game_id == Game.id)
+            .where(
+                Player.user_id == user_id,
+                Player.status.in_([PlayerStatus.ACTIVE, PlayerStatus.INACTIVE]),
+                Game.state != GameState.ENDED,
+            )
+            .limit(1)
+        )
+        if exclude_game_id is not None:
+            stmt = stmt.where(Game.id != exclude_game_id)
+        game: Game | None = await session.scalar(stmt)
+        return game
 
     @staticmethod
     async def _find_player(session: AsyncSession, game_id: str, user_id: str) -> Player | None:

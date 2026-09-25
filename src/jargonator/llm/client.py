@@ -45,6 +45,10 @@ class _EmptyResponseError(Exception):
     """The model returned no content."""
 
 
+class _InvalidResultError(Exception):
+    """The reply parsed, but the caller's ``validate`` check rejected it."""
+
+
 class CompletionsAPI(Protocol):
     """The subset of ``AsyncOpenAI().chat.completions`` this client uses.
 
@@ -64,8 +68,15 @@ def extract_json(content: str) -> str:
 
 
 def _is_retryable(exc: Exception) -> bool:
-    if isinstance(exc, ValidationError | _EmptyResponseError | openai.APIConnectionError):
-        return True  # APITimeoutError is a subclass of APIConnectionError
+    if isinstance(
+        exc,
+        ValidationError
+        | _EmptyResponseError
+        | _InvalidResultError
+        | TimeoutError
+        | openai.APIConnectionError,  # includes openai.APITimeoutError
+    ):
+        return True
     if isinstance(exc, openai.APIStatusError):
         return exc.status_code == 429 or exc.status_code >= 500
     return False
@@ -74,7 +85,9 @@ def _is_retryable(exc: Exception) -> bool:
 def _outcome(exc: Exception) -> str:
     if isinstance(exc, ValidationError | _EmptyResponseError):
         return "parse_error"
-    if isinstance(exc, openai.APITimeoutError):
+    if isinstance(exc, _InvalidResultError):
+        return "invalid_result"
+    if isinstance(exc, TimeoutError | openai.APITimeoutError):
         return "timeout"
     if isinstance(exc, openai.APIConnectionError):
         return "connection_error"
@@ -103,9 +116,20 @@ class OpenRouterClient:
         """The underlying SDK client, kept so it can be closed on shutdown."""
 
     async def complete_json[T: BaseModel](
-        self, task: LLMTask, *, system: str, user: str, schema: type[T], temperature: float
+        self,
+        task: LLMTask,
+        *,
+        system: str,
+        user: str,
+        schema: type[T],
+        temperature: float,
+        validate: Callable[[T], None] | None = None,
     ) -> T:
-        """Return the model's JSON reply parsed into ``schema``, or raise ``LLMError``."""
+        """Return the model's JSON reply parsed into ``schema``, or raise ``LLMError``.
+
+        ``validate`` runs per-call checks that depend on the input (e.g. "one score per
+        guess id"). If it raises, the attempt counts as failed and is retried.
+        """
         primary = self.models[task]
         plan = [(primary, 0.0), *((primary, delay) for delay in PRIMARY_BACKOFF_SECONDS)]
         attempt = 0
@@ -114,13 +138,15 @@ class OpenRouterClient:
             if delay:
                 await self._sleep(delay)
             try:
-                return await self._attempt(task, model, attempt, system, user, schema, temperature)
+                return await self._attempt(
+                    task, model, attempt, system, user, schema, temperature, validate
+                )
             except Exception as exc:
                 if not _is_retryable(exc):
                     break
         try:
             return await self._attempt(
-                task, self.fallback_model, attempt + 1, system, user, schema, temperature
+                task, self.fallback_model, attempt + 1, system, user, schema, temperature, validate
             )
         except Exception as exc:
             # Each failed attempt was already logged. Chain the final (fallback) failure.
@@ -139,20 +165,24 @@ class OpenRouterClient:
         user: str,
         schema: type[T],
         temperature: float,
+        validate: Callable[[T], None] | None,
     ) -> T:
         started = time.perf_counter()
         usage: dict[str, int | None] = {"prompt_tokens": None, "completion_tokens": None}
         try:
-            response: ChatCompletion = await self._completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                response_format={"type": "json_object"},
-                temperature=temperature,
-                timeout=self._timeout,
-            )
+            # The SDK timeout is per read/write step, so a server trickling bytes could
+            # hold a call open indefinitely. asyncio.timeout bounds the whole attempt.
+            async with asyncio.timeout(self._timeout):
+                response: ChatCompletion = await self._completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=temperature,
+                    timeout=self._timeout,
+                )
             if response.usage is not None:
                 usage = {
                     "prompt_tokens": response.usage.prompt_tokens,
@@ -163,6 +193,11 @@ class OpenRouterClient:
             if not content:
                 raise _EmptyResponseError("Empty response")
             result = schema.model_validate_json(extract_json(content))
+            if validate is not None:
+                try:
+                    validate(result)
+                except Exception as exc:
+                    raise _InvalidResultError(str(exc)) from exc
         except Exception as exc:
             self._log(task, model, attempt, started, usage, _outcome(exc))
             raise

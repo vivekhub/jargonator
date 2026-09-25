@@ -1,10 +1,30 @@
+import logging
+from collections.abc import Iterator
+
 import pytest
+import structlog
 
 REQUIRED_ENV = {
     "SLACK_BOT_TOKEN": "xoxb-test",
     "SLACK_APP_TOKEN": "xapp-test",
     "OPENROUTER_API_KEY": "sk-or-test",
 }
+
+
+@pytest.fixture(autouse=True)
+def _isolate_logging() -> Iterator[None]:
+    """Undo configure_logging after each test (review finding 7).
+
+    Otherwise a root handler bound to one test's captured stdout outlives it and later
+    library log records hit a closed stream ("--- Logging error ---").
+    """
+    root = logging.getLogger()
+    handlers, level = root.handlers[:], root.level
+    yield
+    root.handlers[:] = handlers
+    root.setLevel(level)
+    structlog.reset_defaults()
+    structlog.contextvars.clear_contextvars()
 
 
 @pytest.fixture
