@@ -75,3 +75,7 @@ Decisions made during implementation that `spec.md` does not cover.
 | 2026-09-25 | `llm_retry_at` is cleared after every successful essential step | Otherwise a jargon retry that succeeded would make the first judging failure end the game immediately. |
 | 2026-09-25 | A guesser whose DM can't be opened is left out of the round | They could never receive the jargon or guess, and waiting on them would block early end. |
 | 2026-09-25 | A double sentence submit after the first was accepted is ignored silently | A double-click on the modal shouldn't produce a confusing error. |
+| 2026-09-25 | Round scoring is saved by one idempotent repo transaction, `finalize_round_scoring` (guess results, points, round fields, game state), which returns False unless the round is still judging | Built now instead of as the Prompt 20 refactor: points can never be awarded twice, and a crash can't leave partial scores. |
+| 2026-09-25 | The quip is generated after judging, not in parallel | It needs the outcome (who won, writer bonus) to be funny. That adds about 1 s, which is acceptable. |
+| 2026-09-25 | Results (M6) are rendered from the database (`_render_results`) | The same code re-renders the message for Claim host and for removing buttons at Next round. |
+| 2026-09-25 | After results, the round status message (M2) changes to "Round N is done. Results below 👇", and each guesser's DM points to the channel | Keeps the channel and the DMs consistent with the round's state. |

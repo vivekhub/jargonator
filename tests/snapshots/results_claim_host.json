@@ -1,0 +1,98 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "text": "🏁 *Round 2 results* · 🌶️🌶️ Spicy",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "text": {
+        "text": "> I steward a dual-asset feline stakeholder portfolio.",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "text": {
+        "text": "*The original:* “I have two cats”, written by <@U1>",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "text": {
+        "text": "🥇 <@U2>: “I own a pair of kitties” · 95/100 · *+10*\n🥈 <@U3>: “I have a cat” · 80/100 · *+5*\n🥉 <@U4>: “I own pets” · 55/100 · *+1*",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "text": "_Purr-formance review: exceeds expectations._",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "text": {
+        "text": "*Leaderboard*\n1. <@U2>: 25 pts\n2. <@U3>: 10 pts\n3. <@U4>: 1 pt — left\n4. <@U1>: 0 pts",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "action_id": "jargonator_next",
+          "style": "primary",
+          "text": {
+            "emoji": true,
+            "text": "▶️ Next round",
+            "type": "plain_text"
+          },
+          "type": "button",
+          "value": "g1"
+        },
+        {
+          "action_id": "jargonator_end",
+          "style": "danger",
+          "text": {
+            "emoji": true,
+            "text": "🛑 End game",
+            "type": "plain_text"
+          },
+          "type": "button",
+          "value": "g1"
+        },
+        {
+          "action_id": "jargonator_claim_host",
+          "text": {
+            "emoji": true,
+            "text": "🙋 Claim host",
+            "type": "plain_text"
+          },
+          "type": "button",
+          "value": "r1"
+        }
+      ],
+      "type": "actions"
+    },
+    {
+      "elements": [
+        {
+          "text": "Only the host can start the next round or end the game.",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
+    }
+  ],
+  "text": "🏁 Round 2 results: the original was “I have two cats”"
+}

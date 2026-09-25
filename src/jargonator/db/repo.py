@@ -4,7 +4,7 @@ Every public method runs in its own transaction and returns plain records.
 """
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, NamedTuple, Protocol
 
@@ -157,6 +157,20 @@ class RepoProtocol(Protocol):
     async def save_guess_results(self, round_id: str, results: Sequence[GuessResult]) -> None: ...
 
     async def save_turn_order(self, game_id: str, turn_order: TurnOrder) -> None: ...
+
+    async def finalize_round_scoring(
+        self,
+        *,
+        game_id: str,
+        round_id: str,
+        results: Sequence[GuessResult],
+        awards: Mapping[str, tuple[int, bool]],
+        writer_bonus_awarded: bool,
+        quip: str | None,
+        host_claim_at: datetime,
+        next_state: GameState,
+        now: datetime,
+    ) -> bool: ...
 
     async def load_turn_order(self, game_id: str) -> TurnOrder | None: ...
 
@@ -549,6 +563,62 @@ class Repo:
                         moderated_out=result.moderated_out,
                     )
                 )
+
+    async def finalize_round_scoring(
+        self,
+        *,
+        game_id: str,
+        round_id: str,
+        results: Sequence[GuessResult],
+        awards: Mapping[str, tuple[int, bool]],
+        writer_bonus_awarded: bool,
+        quip: str | None,
+        host_claim_at: datetime,
+        next_state: GameState,
+        now: datetime,
+    ) -> bool:
+        """Save a round's scoring in ONE transaction: guess results, player points
+        (``awards``: user → (points, round_win)), round fields and the game's next state.
+
+        Idempotent: returns False (and changes nothing) unless the round is still judging,
+        so a duplicate or recovered judge run can never award points twice.
+        """
+        async with self._sessionmaker.begin() as session:
+            rnd = await session.get(Round, round_id)
+            if rnd is None or rnd.status is not RoundStatus.JUDGING:
+                return False
+            for result in results:
+                await session.execute(
+                    update(Guess)
+                    .where(Guess.id == result.guess_id, Guess.round_id == round_id)
+                    .values(
+                        score=result.score,
+                        rank=result.rank,
+                        points=result.points,
+                        moderated_out=result.moderated_out,
+                    )
+                )
+            for user_id, (points, round_win) in awards.items():
+                await session.execute(
+                    update(Player)
+                    .where(Player.game_id == game_id, Player.user_id == user_id)
+                    .values(
+                        score=Player.score + points,
+                        round_wins=Player.round_wins + (1 if round_win else 0),
+                    )
+                )
+            rnd.status = RoundStatus.COMPLETED
+            rnd.writer_bonus_awarded = writer_bonus_awarded
+            rnd.quip = quip
+            rnd.ended_at = now
+            rnd.host_claim_at = host_claim_at
+            rnd.llm_retry_at = None
+            await session.execute(
+                update(Game)
+                .where(Game.id == game_id)
+                .values(state=next_state, last_activity_at=now)
+            )
+            return True
 
     # --- turn order ---------------------------------------------------------------------
 

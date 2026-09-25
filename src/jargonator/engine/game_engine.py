@@ -19,9 +19,12 @@ from jargonator.db.records import GameRecord, RoundRecord
 from jargonator.db.repo import (
     ChannelBusyError,
     DuplicateGuessError,
+    GuessResult,
     RepoProtocol,
     UserInOtherGameError,
 )
+from jargonator.domain.scoring import GuessInput, ScoringRules, score_round
+from jargonator.domain.standings import PlayerScore, rank_players
 from jargonator.domain.state import (
     GameEvent,
     GameState,
@@ -404,6 +407,17 @@ class GameEngine:
                 self.scheduler.schedule(game_id, TimerKind.LLM_RETRY, retry_at, round_id)
                 log.warning("llm_retry_scheduled", game_id=game_id, round_id=round_id)
                 return
+            if rnd.status is RoundStatus.JUDGING:  # still reveal the round (no points)
+                guesses = await self.repo.get_guesses(round_id)
+                await self._post(
+                    game.channel_id,
+                    *blocks.failed_round_reveal(
+                        rnd.number,
+                        rnd.sentence or "",
+                        rnd.jargon or "",
+                        [(g.user_id, g.text) for g in guesses],
+                    ),
+                )
             await self._end_for_llm_failure(game, round_id)
 
     async def on_llm_retry(self, game_id: str, round_id: str) -> None:
@@ -412,6 +426,8 @@ class GameEngine:
             return
         if rnd.status is RoundStatus.GENERATING:
             await self._generate_and_distribute(game_id, round_id)
+        elif rnd.status is RoundStatus.JUDGING:
+            await self._judge(game_id, round_id)
 
     async def _end_for_llm_failure(self, game: GameRecord, round_id: str) -> None:
         """Caller holds the game lock."""
@@ -514,7 +530,8 @@ class GameEngine:
             )
 
     async def _close_guessing(self, game_id: str, round_id: str) -> None:
-        """Idempotent: only the first caller (early end, deadline, leave) closes the round."""
+        """Idempotent: only the first caller (early end, deadline, leave) closes the round
+        and then judges it."""
         async with self._lock(game_id):
             live = await self._live_round(game_id, round_id, GameState.GUESSING)
             if live is None:
@@ -532,6 +549,152 @@ class GameEngine:
                     *blocks.guessing_closed(rnd.number, rnd.writer_user_id, guessed, total),
                 )
             log.info("guessing_closed", game_id=game_id, round_id=round_id)
+        await self._judge(game_id, round_id)
+
+    # ===================================================================================
+    # Judging and results (spec §3.7, §3.8)
+    # ===================================================================================
+
+    async def _judge(self, game_id: str, round_id: str) -> None:
+        async with self._lock(game_id):
+            live = await self._live_round(game_id, round_id, GameState.JUDGING)
+            if live is None:
+                return
+            _, rnd = live
+            guesses = await self.repo.get_guesses(round_id)
+        sentence, jargon = rnd.sentence or "", rnd.jargon or ""
+        texts = {g.id: g.text for g in guesses}
+
+        flagged = await self.llm.moderate_guesses(texts)
+        valid = {gid: text for gid, text in texts.items() if gid not in flagged}
+        try:
+            scores = await self.llm.judge(sentence, jargon, valid) if valid else {}
+        except LLMError:
+            log.warning("judging_failed", game_id=game_id, round_id=round_id)
+            await self._essential_llm_failure(game_id, round_id)
+            return
+
+        outcome = score_round(
+            [
+                GuessInput(g.id, g.user_id, scores.get(g.id, 0), g.submitted_at, g.id in flagged)
+                for g in guesses
+            ],
+            ScoringRules(
+                points_by_rank=self.settings.points_by_rank,
+                writer_bonus_threshold=self.settings.writer_bonus_threshold,
+                writer_bonus_points=self.settings.writer_bonus_points,
+            ),
+        )
+        top = [texts[p.guess_id] for p in outcome.placements if p.rank is not None and p.rank <= 3]
+        # After judging (not in parallel): the quip is funnier when it knows the outcome.
+        quip = await self.llm.quip(sentence, jargon, top, outcome.writer_bonus > 0)
+
+        async with self._lock(game_id):
+            live = await self._live_round(game_id, round_id, GameState.JUDGING)
+            if live is None:
+                return  # e.g. the game ended while judging: discard the result
+            game, rnd = live
+            now = self.clock.now()
+            awards: dict[str, tuple[int, bool]] = {
+                p.user_id: (p.points, p.rank == 1) for p in outcome.placements if p.points
+            }
+            if outcome.writer_bonus:
+                awards[rnd.writer_user_id] = (outcome.writer_bonus, False)
+            host_claim_at = now + timedelta(seconds=self.settings.host_claim_after_seconds)
+            next_state = transition(game.state, GameEvent.JUDGED)
+            assert next_state is not None
+            saved = await self.repo.finalize_round_scoring(
+                game_id=game_id,
+                round_id=round_id,
+                results=[
+                    GuessResult(
+                        p.guess_id,
+                        None if p.moderated_out else p.score,
+                        p.rank,
+                        p.points,
+                        p.moderated_out,
+                    )
+                    for p in outcome.placements
+                ],
+                awards=awards,
+                writer_bonus_awarded=outcome.writer_bonus > 0,
+                quip=quip,
+                host_claim_at=host_claim_at,
+                next_state=next_state,
+                now=now,
+            )
+            if not saved:
+                return
+            log.info("round_scored", game_id=game_id, round_id=round_id, guesses=len(guesses))
+            await self._publish_results(game_id, round_id)
+
+    async def _publish_results(self, game_id: str, round_id: str) -> None:
+        """Post M6 (+ thread), point guessers at it, mark M2 done, arm HOST_CLAIM.
+        Caller holds the lock. Safe to call again after a crash (recovery)."""
+        game = await self.repo.get_game(game_id)
+        rnd = await self.repo.get_round(round_id)
+        assert game is not None and rnd is not None
+        text, result_blocks, thread = await self._render_results(game, round_id, "host")
+        ref = await self._post(game.channel_id, text, result_blocks)
+        if ref is not None:
+            await self.repo.update_round(round_id, results_message_ts=ref.ts)
+            if thread:
+                await self._post(game.channel_id, "Other guesses", thread, thread_ts=ref.ts)
+        if rnd.status_message_ts is not None:
+            await self._update(
+                MessageRef(game.channel_id, rnd.status_message_ts),
+                *blocks.round_finished(rnd.number, rnd.writer_user_id),
+            )
+        guesses = {g.user_id: g.text for g in await self.repo.get_guesses(round_id)}
+        if rnd.level is not None and rnd.jargon is not None:
+            for guesser in await self.repo.get_round_guessers(round_id):
+                if guesser.dm_message_ts is not None:
+                    await self._update(
+                        MessageRef(guesser.dm_channel_id, guesser.dm_message_ts),
+                        *blocks.guess_prompt_closed(
+                            rnd.number,
+                            rnd.level,
+                            rnd.jargon,
+                            guesses.get(guesser.user_id),
+                            game.channel_id,
+                        ),
+                    )
+        if rnd.host_claim_at is not None:
+            self.scheduler.schedule(game_id, TimerKind.HOST_CLAIM, rnd.host_claim_at, round_id)
+        await self._touch(game_id)
+
+    async def _render_results(
+        self, game: GameRecord, round_id: str, controls: blocks.Controls
+    ) -> tuple[str, list[Block], list[Block] | None]:
+        """Build M6 from the database, so it can be re-rendered later (claim host, next)."""
+        rnd = await self.repo.get_round(round_id)
+        assert rnd is not None
+        guesses = await self.repo.get_guesses(round_id)
+        ranked = sorted((g for g in guesses if g.rank is not None), key=lambda g: g.rank or 0)
+        lines = [
+            blocks.ResultLine(g.user_id, g.text, g.score, g.points, g.rank, g.moderated_out)
+            for g in [*ranked, *(g for g in guesses if g.rank is None)]
+        ]
+        players = await self.repo.get_players(game.id)
+        standings = rank_players(
+            [PlayerScore(p.user_id, p.score, p.round_wins, p.status) for p in players]
+        )
+        return blocks.results(
+            game_id=game.id,
+            round_id=round_id,
+            round_no=rnd.number,
+            writer_id=rnd.writer_user_id,
+            level=rnd.level or JargonLevel.SPICY,
+            jargon=rnd.jargon or "",
+            sentence=rnd.sentence or "",
+            lines=lines,
+            writer_bonus_points=self.settings.writer_bonus_points
+            if rnd.writer_bonus_awarded
+            else 0,
+            quip=rnd.quip,
+            standings=standings,
+            controls=controls,
+        )
 
     # ===================================================================================
     # Helpers

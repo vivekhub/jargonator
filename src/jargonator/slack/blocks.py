@@ -4,9 +4,12 @@ Every action_id comes from ``slack/ids.py``.
 """
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 from jargonator.db.records import GameRecord, PlayerRecord
+from jargonator.domain.standings import Standing
 from jargonator.domain.state import JargonLevel, PlayerStatus
 from jargonator.slack import ids
 from jargonator.slack.gateway import Block
@@ -208,6 +211,146 @@ def guess_prompt_submitted(round_no: int, level: JargonLevel, jargon: str, guess
         _section(f"🕵️ *Round {round_no}*"),
         *_jargon_quote(level, jargon),
         _section(f"✅ *Your guess:* {escape(guess)}"),
+    ]
+
+
+def guess_prompt_closed(
+    round_no: int, level: JargonLevel, jargon: str, guess: str | None, channel_id: str
+) -> Message:
+    """M5 after the round: points the guesser to the results in the channel."""
+    text = f"🏁 Round {round_no}: results are in 👉 <#{channel_id}>"
+    lines = [_section(f"🏁 *Round {round_no}*: results are in 👉 <#{channel_id}>")]
+    lines += _jargon_quote(level, jargon)
+    lines.append(
+        _context(f"Your guess: {escape(guess)}" if guess else "You didn't guess this time.")
+    )
+    return text, lines
+
+
+def round_finished(round_no: int, writer_id: str) -> Message:
+    """M2 once the round has results."""
+    text = f"🏁 Round {round_no} ({mention(writer_id)}'s sentence) is done. Results below 👇"
+    return text, [_section(text)]
+
+
+# --- results (M6) -----------------------------------------------------------------------------
+
+MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
+INLINE_OTHER_GUESSES = 5
+Controls = Literal["host", "claim", "none"]
+
+
+@dataclass(frozen=True)
+class ResultLine:
+    user_id: str
+    text: str
+    score: int | None
+    points: int
+    rank: int | None
+    moderated: bool
+
+
+def _guess_line(line: ResultLine) -> str:
+    if line.moderated:
+        return f"• {mention(line.user_id)}: 🚫 [hidden by moderation]"
+    score = f" · {line.score}/100" if line.score is not None else ""
+    return f"• {mention(line.user_id)}: “{escape(line.text)}”{score}"
+
+
+def _leaderboard(standings: Sequence[Standing]) -> str:
+    rows = [
+        f"{s.rank}. {mention(s.player.user_id)}: {plural(s.player.score, 'pt')}"
+        f"{_STATUS_SUFFIX[s.player.status]}"
+        for s in standings
+    ]
+    return "*Leaderboard*\n" + "\n".join(rows)
+
+
+def _controls(game_id: str, round_id: str, controls: Controls) -> list[Block]:
+    if controls == "none":
+        return []
+    buttons = [
+        _button("▶️ Next round", ids.NEXT, game_id, style="primary"),
+        _button("🛑 End game", ids.END, game_id, style="danger"),
+    ]
+    if controls == "claim":
+        buttons.append(_button("🙋 Claim host", ids.CLAIM_HOST, round_id))
+    return [
+        {"type": "actions", "elements": buttons},
+        _context("Only the host can start the next round or end the game."),
+    ]
+
+
+def results(
+    *,
+    game_id: str,
+    round_id: str,
+    round_no: int,
+    writer_id: str,
+    level: JargonLevel,
+    jargon: str,
+    sentence: str,
+    lines: Sequence[ResultLine],
+    writer_bonus_points: int,
+    quip: str | None,
+    standings: Sequence[Standing],
+    controls: Controls,
+) -> tuple[str, list[Block], list[Block] | None]:
+    """M6: round results (spec §3.8). Returns (text, blocks, thread_blocks_or_None).
+
+    ``lines`` holds the ranked guesses in order, then the moderated ones.
+    """
+    top = [line for line in lines if line.rank is not None and line.rank in MEDALS]
+    others = [line for line in lines if line not in top]
+    text = f"🏁 Round {round_no} results: the original was “{escape(sentence)}”"
+
+    out: list[Block] = [
+        _section(f"🏁 *Round {round_no} results* · {LEVEL_BADGES[level]}"),
+        _section(f"> {escape(jargon)}"),
+        _section(f"*The original:* “{escape(sentence)}”, written by {mention(writer_id)}"),
+    ]
+    if not lines:
+        out.append(_section("_No guesses this round._"))
+    if top:
+        out.append(
+            _section(
+                "\n".join(
+                    f"{MEDALS[line.rank or 0]} {mention(line.user_id)}: “{escape(line.text)}”"
+                    f" · {line.score}/100 · *+{line.points}*"
+                    for line in top
+                )
+            )
+        )
+    if writer_bonus_points:
+        out.append(
+            _section(f"🕵️ Nobody cracked it! {mention(writer_id)} earns +{writer_bonus_points}.")
+        )
+    thread: list[Block] | None = None
+    if others:
+        if len(others) <= INLINE_OTHER_GUESSES:
+            out.append(_section("*Other guesses*\n" + "\n".join(map(_guess_line, others))))
+        else:
+            out.append(_context(f"🧵 {plural(len(others), 'more guess')} in the thread."))
+            thread = [_section("*Other guesses*\n" + "\n".join(map(_guess_line, others)))]
+    if quip:
+        out.append(_context(f"_{escape(quip)}_"))
+    out.append({"type": "divider"})
+    out.append(_section(_leaderboard(standings)))
+    out += _controls(game_id, round_id, controls)
+    return text, out, thread
+
+
+def failed_round_reveal(
+    round_no: int, sentence: str, jargon: str, guesses: Sequence[tuple[str, str]]
+) -> Message:
+    """Reveal for a round that couldn't be judged (spec §3.11): no points, no scores."""
+    text = f"Round {round_no} couldn't be scored. The original was “{escape(sentence)}”"
+    guess_lines = "\n".join(f"• {mention(u)}: “{escape(g)}”" for u, g in guesses)
+    return text, [
+        _section(f"🤷 *Round {round_no} couldn't be scored.*"),
+        _section(f"> {escape(jargon)}"),
+        _section(f"*The original:* “{escape(sentence)}”"),
+        _section("*Guesses*\n" + (guess_lines or "_none_")),
     ]
 
 

@@ -829,7 +829,7 @@ Final: update DECISIONS.md with anything decided along the way, and confirm all 
 - [x] 13 Engine II: start + writer phase
 - [x] 14 Engine III: generation + distribution
 - [x] 15 Engine IV: guessing
-- [ ] 16 Engine V: judging + results
+- [x] 16 Engine V: judging + results
 - [ ] 17 Engine VI: next/pause/end/final board
 - [ ] 18 Engine VII: timeouts + host management
 - [ ] 19 TimerService + container wiring

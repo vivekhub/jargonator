@@ -87,7 +87,9 @@ async def test_deadline_closes_guessing(harness: Harness) -> None:
     harness.clock.advance(60)
     await harness.engine.on_guess_deadline((await harness.game()).id, round_id)
     assert (await harness.round()).status is not RoundStatus.GUESSING
-    assert "guessing closed" in harness.slack.current(await status_message(harness)).text
+    status = harness.slack.current(await status_message(harness))
+    assert any("guessing closed" in text for text, _ in status.history)
+    assert "Results below" in status.text  # judging ran straight after closing
 
 
 async def test_last_pending_guesser_leaving_closes_early(harness: Harness) -> None:

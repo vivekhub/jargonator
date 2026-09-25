@@ -1,0 +1,33 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "text": "🤷 *Round 3 couldn't be scored.*",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "text": {
+        "text": "> feline synergy",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "text": {
+        "text": "*The original:* “I have two cats”",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "text": {
+        "text": "*Guesses*\n• <@U2>: “kitties”\n• <@U3>: “&lt;b&gt;dogs&lt;/b&gt;”",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    }
+  ],
+  "text": "Round 3 couldn't be scored. The original was “I have two cats”"
+}
