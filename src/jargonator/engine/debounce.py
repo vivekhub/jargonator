@@ -6,6 +6,7 @@ The first call for a key runs at once (leading edge). Calls during the following
 
 import asyncio
 import contextlib
+import contextvars
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 
@@ -29,7 +30,7 @@ class Debouncer:
         if key in self._tasks:
             self._pending[key] = work  # coalesce: only the latest pending call survives
             return
-        self._tasks[key] = asyncio.create_task(self._run(key, work))
+        self._tasks[key] = asyncio.create_task(self._run(key, work), context=contextvars.Context())
 
     def active(self, key: str) -> bool:
         return key in self._tasks

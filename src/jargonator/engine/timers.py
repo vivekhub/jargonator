@@ -6,6 +6,7 @@ cache of what the DB says. After a restart, ``GameEngine.recover`` re-schedules 
 
 import asyncio
 import contextlib
+import contextvars
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 
@@ -36,7 +37,13 @@ class TimerService:
             raise RuntimeError("TimerService.bind() must be called before scheduling")
         self.cancel(game_id, kind)
         key = (game_id, kind)
-        task = asyncio.create_task(self._run(key, when, round_id), name=f"timer:{game_id}:{kind}")
+        # A fresh context: otherwise the task inherits the log context (user, channel) of
+        # whichever request scheduled it, and later timer logs would be misattributed.
+        task = asyncio.create_task(
+            self._run(key, when, round_id),
+            name=f"timer:{game_id}:{kind}",
+            context=contextvars.Context(),
+        )
         self._tasks[key] = (task, when)
 
     def cancel(self, game_id: str, kind: TimerKind) -> None:

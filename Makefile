@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test check run try-llm
+.PHONY: install lint format typecheck test coverage check run try-llm
 
 UV ?= uv
 
@@ -19,7 +19,10 @@ typecheck:
 test:
 	$(UV) run pytest
 
-check: lint typecheck test
+coverage:
+	$(UV) run pytest --cov=jargonator.domain --cov=jargonator.engine --cov-report=term-missing:skip-covered --cov-fail-under=85
+
+check: lint typecheck coverage
 
 run:
 	$(UV) run jargonator

@@ -113,3 +113,21 @@ def test_pending_introspection() -> None:
         await timers.shutdown()
 
     asyncio.run(run())
+
+
+async def test_timer_tasks_do_not_inherit_the_callers_log_context() -> None:
+    import structlog
+
+    clock = FakeClock(T0)
+    timers = TimerService(clock)
+    seen: list[dict[str, object]] = []
+
+    async def dispatch(game_id: str, kind: TimerKind, round_id: str | None) -> None:
+        seen.append(structlog.contextvars.get_contextvars())
+
+    timers.bind(dispatch)
+    structlog.contextvars.bind_contextvars(user_id="U2", channel_id="DU2")
+    timers.schedule("g1", TimerKind.IDLE, T0, None)
+    structlog.contextvars.clear_contextvars()
+    await clock.settle()
+    assert seen == [{}]

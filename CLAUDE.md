@@ -8,8 +8,10 @@ async Slack Bolt in Socket Mode, SQLite. `spec.md` is the full specification, an
 
 ## Commands
 
-- `make check`: lint + format check + `mypy --strict src tests/fakes` + tests (must pass after every step)
-- `make test`: run the tests
+- `make check`: lint + format check + `mypy --strict src tests/fakes scripts` + tests with coverage ≥ 85% on `domain/` and `engine/` (must pass after every step)
+- `make test`: run the tests (no coverage)
+- `make coverage`: tests plus the coverage gate
+- `make try-llm`: try the real prompts against OpenRouter (needs `OPENROUTER_API_KEY`)
 - `make format`: auto-format and auto-fix lint
 - `make run`: run the bot
 
