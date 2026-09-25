@@ -1,0 +1,27 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "emoji": true,
+        "text": "💼 Jargonator",
+        "type": "plain_text"
+      },
+      "type": "header"
+    },
+    {
+      "text": {
+        "text": "*How to play:* each round one player DMs me a simple sentence about themselves. I turn it into corporate jargon and DM it to everyone else, who have 60 seconds to guess the original. An AI judge scores each guess 0–100 on meaning: the top three get *10 / 5 / 1* points. If nobody gets close, the writer earns *+10*.",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "text": {
+        "text": "`/jargonator start`: Start a game in this channel\n`/jargonator join`: Join the game here (any time)\n`/jargonator leave`: Leave the game (your score is kept)\n`/jargonator status`: Show the game's state and scores\n`/jargonator next`: Host: start the next round\n`/jargonator kick @someone`: Host: remove a player\n`/jargonator end`: Host or admin: end the game\n`/jargonator help`: Show this help",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    }
+  ],
+  "text": "Jargonator help"
+}

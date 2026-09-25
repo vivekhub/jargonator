@@ -6,13 +6,16 @@ Every action_id comes from ``slack/ids.py``.
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from jargonator.db.records import GameRecord, PlayerRecord
 from jargonator.domain.standings import Highlights, Standing
 from jargonator.domain.state import GameState, JargonLevel, PlayerStatus
 from jargonator.slack import ids
 from jargonator.slack.gateway import Block
+
+if TYPE_CHECKING:
+    from jargonator.engine.game_engine import StatusView
 
 Message = tuple[str, list[Block]]
 
@@ -442,6 +445,76 @@ def final_scoreboard(
     if facts:
         out += [{"type": "divider"}, _section("*Highlights*\n" + "\n".join(facts))]
     return "🏆 Final scoreboard", out
+
+
+# --- /jargonator help and status ------------------------------------------------------------
+
+COMMANDS = [
+    ("start", "Start a game in this channel"),
+    ("join", "Join the game here (any time)"),
+    ("leave", "Leave the game (your score is kept)"),
+    ("status", "Show the game's state and scores"),
+    ("next", "Host: start the next round"),
+    ("kick @someone", "Host: remove a player"),
+    ("end", "Host or admin: end the game"),
+    ("help", "Show this help"),
+]
+
+
+def help_text() -> Message:
+    rules = (
+        "*How to play:* each round one player DMs me a simple sentence about themselves. "
+        "I turn it into corporate jargon and DM it to everyone else, who have "
+        "60 seconds to guess the original. An AI judge scores each guess 0–100 on meaning: "
+        "the top three get *10 / 5 / 1* points. If nobody gets close, the writer earns *+10*."
+    )
+    commands = "\n".join(f"`/jargonator {cmd}`: {desc}" for cmd, desc in COMMANDS)
+    return "Jargonator help", [
+        {"type": "header", "text": {"type": "plain_text", "text": "💼 Jargonator", "emoji": True}},
+        _section(rules),
+        _section(commands),
+    ]
+
+
+_STATE_LABELS = {
+    GameState.LOBBY: "Lobby: waiting for players",
+    GameState.AWAITING_SENTENCE: "is writing",
+    GameState.GENERATING: "the AI is jargonizing…",
+    GameState.GUESSING: "guessing",
+    GameState.JUDGING: "judging…",
+    GameState.AWAITING_NEXT: "Waiting for the host to start the next round",
+    GameState.PAUSED_PLAYERS: "Paused: waiting for more players",
+}
+
+
+def status(view: "StatusView", now: datetime) -> Message:
+    game = view.game
+    label = _STATE_LABELS.get(game.state, str(game.state))
+    left = (
+        f" ({max(0, round((view.deadline - now).total_seconds()))} s left)" if view.deadline else ""
+    )
+    if view.round_number is not None and game.state in (
+        GameState.AWAITING_SENTENCE,
+        GameState.GENERATING,
+        GameState.GUESSING,
+        GameState.JUDGING,
+    ):
+        writer = mention(view.writer_id) if view.writer_id else "someone"
+        subject = f"{writer} {label}" if game.state is GameState.AWAITING_SENTENCE else label
+        line = f"*Round {view.round_number}*: {subject}{left}"
+    else:
+        line = f"*{label}*"
+    ranked = sorted(view.players, key=lambda p: (-p.score, p.joined_at))
+    scores = "\n".join(
+        f"• {mention(p.user_id)}: {plural(p.score, 'pt')}{_STATUS_SUFFIX[p.status]}" for p in ranked
+    )
+    out = [
+        _section(f"💼 {line}\n*Host:* {mention(game.host_user_id)}"),
+        _section(f"*Scores*\n{scores}"),
+    ]
+    if view.upcoming_writers:
+        out.append(_context("Up next: " + ", ".join(mention(u) for u in view.upcoming_writers)))
+    return f"Jargonator: {line}", out
 
 
 def llm_retry_notice(seconds: int) -> Message:

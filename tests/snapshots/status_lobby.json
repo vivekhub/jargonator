@@ -1,0 +1,19 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "text": "💼 *Lobby: waiting for players*\n*Host:* <@U1>",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "text": {
+        "text": "*Scores*\n• <@U1>: 0 pts\n• <@U2>: 0 pts\n• <@U3>: 0 pts",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    }
+  ],
+  "text": "Jargonator: *Lobby: waiting for players*"
+}

@@ -9,13 +9,14 @@ duplicate clicks, racing timers and late LLM replies are harmless.
 import asyncio
 import random
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import structlog
 
 from jargonator.clock import Clock
 from jargonator.config import Settings
-from jargonator.db.records import GameRecord, RoundRecord
+from jargonator.db.records import GameRecord, PlayerRecord, RoundRecord
 from jargonator.db.repo import (
     ChannelBusyError,
     DuplicateGuessError,
@@ -49,6 +50,19 @@ MIN_SENTENCE, MAX_SENTENCE = 5, 150
 MIN_GUESS, MAX_GUESS = 1, 200
 NOT_IN_CHANNEL_CODES = frozenset({"not_in_channel", "channel_not_found", "is_archived"})
 INVITE_HINT = "I can't post here yet. Invite me with `/invite @Jargonator` first, then try again."
+
+
+@dataclass(frozen=True)
+class StatusView:
+    """Read-only snapshot for ``/jargonator status``."""
+
+    game: GameRecord
+    players: list[PlayerRecord]
+    round_number: int | None
+    round_status: RoundStatus | None
+    writer_id: str | None
+    deadline: datetime | None
+    upcoming_writers: list[str]
 
 
 class GameEngine:
@@ -100,6 +114,30 @@ class GameEngine:
                 await self.on_host_claim_available(game_id, round_id)
             elif kind is TimerKind.RESUME:
                 await self.on_resume(game_id, round_id)
+
+    async def get_status(self, channel_id: str) -> StatusView | None:
+        game = await self.repo.get_active_game_by_channel(channel_id)
+        if game is None:
+            return None
+        players = await self.repo.get_players(game.id)
+        rnd = await self.repo.get_current_round(game.id)
+        deadline = None
+        if rnd is not None and rnd.status is RoundStatus.AWAITING_SENTENCE:
+            deadline = rnd.writer_deadline
+        elif rnd is not None and rnd.status is RoundStatus.GUESSING:
+            deadline = rnd.guess_deadline
+        order = await self.repo.load_turn_order(game.id)
+        active = {p.user_id for p in players if p.status is PlayerStatus.ACTIVE}
+        upcoming = [u for u in (order.queue if order else []) if u in active][:3]
+        return StatusView(
+            game=game,
+            players=players,
+            round_number=rnd.number if rnd else None,
+            round_status=rnd.status if rnd else None,
+            writer_id=rnd.writer_user_id if rnd else None,
+            deadline=deadline,
+            upcoming_writers=upcoming,
+        )
 
     # ===================================================================================
     # Restart recovery (spec §9)

@@ -1,0 +1,28 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "text": "💼 *Round 3*: guessing (45 s left)\n*Host:* <@U1>",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "text": {
+        "text": "*Scores*\n• <@U1>: 0 pts\n• <@U2>: 0 pts\n• <@U3>: 0 pts",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "text": "Up next: <@U3>, <@U1>",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
+    }
+  ],
+  "text": "Jargonator: *Round 3*: guessing (45 s left)"
+}
