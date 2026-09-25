@@ -8,7 +8,7 @@ async Slack Bolt in Socket Mode, SQLite. `spec.md` is the full specification, an
 
 ## Commands
 
-- `make check`: lint + format check + `mypy --strict src` + tests (must pass after every step)
+- `make check`: lint + format check + `mypy --strict src tests/fakes` + tests (must pass after every step)
 - `make test`: run the tests
 - `make format`: auto-format and auto-fix lint
 - `make run`: run the bot

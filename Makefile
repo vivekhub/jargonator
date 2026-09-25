@@ -14,7 +14,7 @@ format:
 	$(UV) run ruff check --fix src tests
 
 typecheck:
-	$(UV) run mypy --strict src
+	$(UV) run mypy --strict src tests/fakes
 
 test:
 	$(UV) run pytest

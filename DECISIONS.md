@@ -54,3 +54,9 @@ Decisions made during implementation that `spec.md` does not cover.
 | 2026-09-25 | Guesses are ordered by `submitted_at`, then SQLite `rowid` (insertion order), and `sort_valid` is stable | Review finding 3: ties were broken by random uuid4 ids (reproduced), which made "earlier submission wins" non-deterministic. |
 | 2026-09-25 | `SystemClock.sleep_until` loops until the wall clock reaches the deadline | Review finding 6: a single monotonic sleep can wake early after a wall-clock adjustment during the 2 h idle wait. |
 | 2026-09-25 | An autouse test fixture restores logging state after each test | Review finding 7: a stale root handler caused "--- Logging error ---" noise. |
+| 2026-09-25 | Guesses are relabelled `g1, g2, …` before reaching the LLM and mapped back afterwards | Short ids are harder for the model to garble than uuids, save tokens, and keep internal ids out of prompts. |
+| 2026-09-25 | Player text is escaped by replacing `<`/`>` with `‹`/`›` inside tags, and every system prompt says tag contents are data | Prompt-injection hardening (spec §7.1). A player can't close a tag and smuggle instructions. |
+| 2026-09-25 | Blank jargon (after stripping quotes) counts as a failed attempt via the `validate` callback | An empty jargon DM would break the round. Retrying is the right response. |
+| 2026-09-25 | The quip is truncated to 25 words with a trailing "…". A blank quip becomes `None` (no quip block) | Spec §7.5 word limit. Never post an empty line. |
+| 2026-09-25 | `mypy --strict` now also checks `tests/fakes/` | The fakes stand in for real components in every engine test, so they must provably match the protocols (e.g. `FakeLLM` vs `LLMTasks`). |
+| 2026-09-25 | The fake OpenAI connection moved to `tests/fakes/openai_stub.py` | Shared by the client and tasks tests. |
