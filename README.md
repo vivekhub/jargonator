@@ -1,3 +1,5 @@
+<img src="assets/logo-512.png" alt="Jargonator logo" width="128" align="right">
+
 # 💼 Jargonator
 
 A multiplayer Slack game. Each round, one player writes a simple sentence about themselves.
@@ -46,9 +48,11 @@ scoreboard.
 
 1. Go to <https://api.slack.com/apps> → **Create New App** → **From an app manifest**, pick your
    workspace, and paste [`slack-manifest.yaml`](slack-manifest.yaml).
-2. **Install to Workspace**, then copy the **Bot User OAuth Token** (`xoxb-…`) from
+2. Under *Basic Information* → **Display Information**, upload
+   [`assets/logo-1024.png`](assets/logo-1024.png) as the app icon.
+3. **Install to Workspace**, then copy the **Bot User OAuth Token** (`xoxb-…`) from
    *OAuth & Permissions*.
-3. Under *Basic Information* → **App-Level Tokens**, create a token with the
+4. Under *Basic Information* → **App-Level Tokens**, create a token with the
    `connections:write` scope (`xapp-…`). Socket Mode uses this, so no public URL is needed.
 
 ### 2. Get an OpenRouter key

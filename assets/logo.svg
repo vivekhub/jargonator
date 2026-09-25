@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Jargonator app icon: corporate necktie inside a speech bubble. -->
+  <!-- Solid colours only, so it renders anywhere and reads at 36 px. -->
+
+  <!-- background (Slack rounds the corners itself) -->
+  <rect width="1024" height="1024" fill="#312e81"/>
+
+  <!-- speech bubble with a tail -->
+  <path d="M220 180 H804 A100 100 0 0 1 904 280 V660 A100 100 0 0 1 804 760 H470
+           L290 900 L320 760 H220 A100 100 0 0 1 120 660 V280 A100 100 0 0 1 220 180 Z"
+        fill="#ffffff"/>
+
+  <!-- shirt collar -->
+  <path d="M392 232 L512 300 L632 232 L612 318 L512 342 L412 318 Z" fill="#c7d2fe"/>
+  <!-- tie knot -->
+  <path d="M458 306 H566 L546 392 H478 Z" fill="#c2410c"/>
+  <!-- tie blade, with stripes clipped to its shape -->
+  <clipPath id="blade">
+    <path d="M478 392 H546 L612 606 L512 712 L412 606 Z"/>
+  </clipPath>
+  <path d="M478 392 H546 L612 606 L512 712 L412 606 Z" fill="#f97316"/>
+  <path d="M440 420 L600 580 M420 520 L620 720" stroke="#fed7aa" stroke-width="22"
+        clip-path="url(#blade)"/>
+
+  <!-- buzzword sparkles -->
+  <path d="M742 264 l18 50 l50 18 l-50 18 l-18 50 l-18 -50 l-50 -18 l50 -18 Z" fill="#facc15"/>
+  <path d="M270 440 l12 34 l34 12 l-34 12 l-12 34 l-12 -34 l-34 -12 l34 -12 Z" fill="#facc15"/>
+  <path d="M760 560 l9 24 l24 9 l-24 9 l-9 24 l-9 -24 l-24 -9 l24 -9 Z" fill="#818cf8"/>
+</svg>
