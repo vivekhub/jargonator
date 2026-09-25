@@ -15,6 +15,8 @@ class TimerKind(StrEnum):
     LLM_RETRY = "llm_retry"
     HOST_CLAIM = "host_claim"
     IDLE = "idle"
+    RESUME = "resume"
+    """Restart recovery: resume a step that was interrupted mid-way (spec §9)."""
 
 
 class Scheduler(Protocol):

@@ -98,6 +98,81 @@ class GameEngine:
                 await self.on_llm_retry(game_id, round_id)
             elif kind is TimerKind.HOST_CLAIM:
                 await self.on_host_claim_available(game_id, round_id)
+            elif kind is TimerKind.RESUME:
+                await self.on_resume(game_id, round_id)
+
+    # ===================================================================================
+    # Restart recovery (spec §9)
+    # ===================================================================================
+
+    async def recover(self) -> None:
+        """Re-arm every live game's deadlines after a restart. Interrupted work (an LLM
+        step, or results that were scored but not posted) is resumed through a RESUME
+        timer, so startup never waits on slow LLM calls. Past deadlines fire at once."""
+        games = await self.repo.list_non_ended_games()
+        for game in games:
+            async with self._lock(game.id):
+                await self._recover_game(game)
+        log.info("recovered_games", count=len(games))
+
+    async def _recover_game(self, game: GameRecord) -> None:
+        now = self.clock.now()
+        self.scheduler.schedule(
+            game.id, TimerKind.IDLE, self._idle_deadline(game.last_activity_at), None
+        )
+        if game.state is GameState.LOBBY:
+            if game.lobby_deadline is not None:
+                self.scheduler.schedule(game.id, TimerKind.LOBBY, game.lobby_deadline, None)
+            return
+        rnd = await self.repo.get_current_round(game.id)
+        if rnd is None:
+            return
+        if game.state is GameState.AWAITING_SENTENCE:
+            if rnd.writer_reminder_at is not None:
+                self.scheduler.schedule(
+                    game.id, TimerKind.WRITER_REMINDER, rnd.writer_reminder_at, rnd.id
+                )
+            if rnd.writer_deadline is not None:
+                self.scheduler.schedule(
+                    game.id, TimerKind.WRITER_DEADLINE, rnd.writer_deadline, rnd.id
+                )
+        elif game.state is GameState.GUESSING and rnd.guess_deadline is not None:
+            self.scheduler.schedule(game.id, TimerKind.GUESS_DEADLINE, rnd.guess_deadline, rnd.id)
+        elif game.state in (GameState.GENERATING, GameState.JUDGING):
+            if rnd.llm_retry_at is not None:  # mid-wait: the retry is the final attempt
+                self.scheduler.schedule(game.id, TimerKind.LLM_RETRY, rnd.llm_retry_at, rnd.id)
+            else:
+                self.scheduler.schedule(game.id, TimerKind.RESUME, now, rnd.id)
+        elif game.state is GameState.AWAITING_NEXT:
+            if rnd.status is RoundStatus.COMPLETED and rnd.results_message_ts is None:
+                self.scheduler.schedule(game.id, TimerKind.RESUME, now, rnd.id)
+            if rnd.host_claim_at is not None:
+                self.scheduler.schedule(game.id, TimerKind.HOST_CLAIM, rnd.host_claim_at, rnd.id)
+        log.info("game_recovered", game_id=game.id, state=str(game.state))
+
+    async def on_resume(self, game_id: str, round_id: str) -> None:
+        rnd = await self.repo.get_round(round_id)
+        if rnd is None:
+            return
+        if rnd.status is RoundStatus.GENERATING:
+            await self._generate_and_distribute(game_id, round_id)
+        elif rnd.status is RoundStatus.JUDGING:
+            await self._judge(game_id, round_id)
+        elif rnd.status is RoundStatus.COMPLETED and rnd.results_message_ts is None:
+            async with self._lock(game_id):
+                game = await self.repo.get_game(game_id)
+                current = await self.repo.get_current_round(game_id)
+                fresh = await self.repo.get_round(round_id)
+                if (
+                    game is not None
+                    and game.state is GameState.AWAITING_NEXT
+                    and current is not None
+                    and current.id == round_id
+                    and fresh is not None
+                    and fresh.results_message_ts is None
+                ):
+                    log.info("results_reposted_after_restart", game_id=game_id, round_id=round_id)
+                    await self._publish_results(game_id, round_id)
 
     # ===================================================================================
     # Lobby: create / join / leave (spec §3.1, §3.2, §3.10)

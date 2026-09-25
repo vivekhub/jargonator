@@ -33,6 +33,10 @@ async def timed(tmp_path: Path, required_env: dict[str, str]) -> AsyncIterator[H
     await harness.aclose()
 
 
+async def posted(harness: Harness, text: str) -> bool:
+    return any(text in t for t in harness.channel_texts())
+
+
 async def state_is(harness: Harness, state: GameState) -> bool:
     return (await harness.game()).state is state
 
@@ -46,9 +50,8 @@ async def test_timers_drive_a_full_round(timed: Harness) -> None:
     await timed.engine.next_round("C1", (await timed.game()).host_user_id)
     await timed.write()
     await timed.clock.tick(60)  # guess deadline passes with no guesses
-    await wait_until(lambda: state_is(timed, GameState.AWAITING_NEXT))
+    await wait_until(lambda: posted(timed, "Round 2 results"))
     assert (await timed.round()).status is RoundStatus.COMPLETED
-    assert any("Round 2 results" in t for t in timed.channel_texts())
 
 
 async def test_llm_retry_timer_fires(timed: Harness) -> None:

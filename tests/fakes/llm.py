@@ -94,6 +94,7 @@ class FakeLLM:
             level=level,
             avoid_words=set(avoid_words) if avoid_words else None,
         )
+        await self._gate("generate_jargon")
         return self.jargon.pop(0) if len(self.jargon) > 1 else self.jargon[0]
 
     async def judge(self, original: str, jargon: str, guesses: Mapping[str, str]) -> dict[str, int]:

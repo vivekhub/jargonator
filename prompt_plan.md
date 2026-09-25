@@ -833,7 +833,7 @@ Final: update DECISIONS.md with anything decided along the way, and confirm all 
 - [x] 17 Engine VI: next/pause/end/final board
 - [x] 18 Engine VII: timeouts + host management
 - [x] 19 TimerService + container wiring
-- [ ] 20 Restart recovery
+- [x] 20 Restart recovery
 - [ ] 21 Real gateway + slash commands
 - [ ] 22 Buttons + modals
 - [ ] 23 main, health, shutdown
