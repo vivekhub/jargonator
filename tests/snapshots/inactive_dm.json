@@ -1,0 +1,12 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "text": "💤 You missed your turn 3 times in a row, so you've been marked inactive. Click Join on the game card to come back (your score is kept).",
+        "type": "mrkdwn"
+      },
+      "type": "section"
+    }
+  ],
+  "text": "💤 You missed your turn 3 times in a row, so you've been marked inactive. Click Join on the game card to come back (your score is kept)."
+}

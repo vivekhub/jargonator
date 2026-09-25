@@ -377,6 +377,28 @@ def paused_notice(game_id: str) -> Message:
     return text, [_section(text), *_controls(game_id, "", "host")]
 
 
+def skipped_round(
+    round_no: int, game_id: str, round_id: str, reason: str, controls: Controls
+) -> Message:
+    """Results-lite for a skipped round: the reason plus the host's Next/End controls."""
+    return reason, [
+        _section(f"⏭️ *Round {round_no} skipped.* {reason}"),
+        *_controls(game_id, round_id, controls),
+    ]
+
+
+def inactive_dm() -> Message:
+    text = (
+        "💤 You missed your turn 3 times in a row, so you've been marked inactive. "
+        "Click Join on the game card to come back (your score is kept)."
+    )
+    return text, [_section(text)]
+
+
+def host_changed_notice(user_id: str) -> Message:
+    return notice(f"👑 {mention(user_id)} is now the host.")
+
+
 def round_ended_early(round_no: int) -> Message:
     text = f"🛑 The game ended before round {round_no} finished."
     return text, [_section(text)]

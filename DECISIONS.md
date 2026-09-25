@@ -83,3 +83,7 @@ Decisions made during implementation that `spec.md` does not cover.
 | 2026-09-25 | When paused, the pause notice carries its own Next/End buttons. Clicking Next while still short of players gives an ephemeral "Still waiting for players" | The host needs a button to resume, without a new notice on every click. |
 | 2026-09-25 | Ending mid-round updates the round status message to "Round N was cancelled" and each guesser's DM to "the game ended before round N finished" | Nobody is left looking at a live-looking prompt. |
 | 2026-09-25 | The lobby card loses all buttons when the game ends, and says "Game over" | Stale Join/Start buttons would only produce errors. |
+| 2026-09-25 | If the writer leaves (or is kicked) before submitting, the round is skipped at once, without counting a miss | The spec doesn't cover this. Waiting out the writer timer for someone who left would stall everyone. |
+| 2026-09-25 | A skipped round posts a "results-lite" message (the reason plus Next/End buttons), stored as the round's `results_message_ts` | The host always has buttons to continue, and Claim host and button cleanup work the same for skipped and completed rounds. |
+| 2026-09-25 | A writer timeout doesn't count as activity for the idle timer | Otherwise an abandoned game with AFK writers would never hit the 2 h idle end. |
+| 2026-09-25 | Leave and kick share one `_remove_player` path (host transfer, skipping the writer's round, early end) | One tested path for every way a player can drop out. |

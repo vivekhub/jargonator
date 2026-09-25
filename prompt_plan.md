@@ -831,7 +831,7 @@ Final: update DECISIONS.md with anything decided along the way, and confirm all 
 - [x] 15 Engine IV: guessing
 - [x] 16 Engine V: judging + results
 - [x] 17 Engine VI: next/pause/end/final board
-- [ ] 18 Engine VII: timeouts + host management
+- [x] 18 Engine VII: timeouts + host management
 - [ ] 19 TimerService + container wiring
 - [ ] 20 Restart recovery
 - [ ] 21 Real gateway + slash commands

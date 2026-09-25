@@ -160,17 +160,53 @@ class GameEngine:
             player = await self.repo.get_player(game.id, user_id)
             if player is None or player.status is PlayerStatus.LEFT:
                 raise UserFacingError("You're not in this game.")
-            await self.repo.update_player(
-                game.id, user_id, status=PlayerStatus.LEFT, left_at=self.clock.now()
+            close_round = await self._remove_player(
+                game, user_id, f"🚪 {blocks.mention(user_id)} left the game."
             )
-            await self._notice(game, f"🚪 {blocks.mention(user_id)} left the game.")
-            game = await self._transfer_host_if_needed(game)
-            await self._refresh_lobby(game)
-            await self._touch(game.id)
-            log.info("player_left", game_id=game.id, user_id=user_id)
-            close_round = await self._everyone_has_guessed(game)
         if close_round is not None:
             await self._close_guessing(game.id, close_round)
+
+    async def kick(self, channel_id: str, host_user_id: str, target_user_id: str) -> None:
+        game = await self._require_channel_game(channel_id)
+        async with self._lock(game.id):
+            game = await self._reload(game.id)
+            self._require_host(game, host_user_id)
+            if target_user_id == host_user_id:
+                raise UserFacingError("You can't kick yourself. Use `/jargonator leave` instead.")
+            target = await self.repo.get_player(game.id, target_user_id)
+            if target is None or target.status is PlayerStatus.LEFT:
+                raise UserFacingError(f"{blocks.mention(target_user_id)} isn't in this game.")
+            close_round = await self._remove_player(
+                game,
+                target_user_id,
+                f"🥾 {blocks.mention(target_user_id)} was removed from the game by the host.",
+            )
+        if close_round is not None:
+            await self._close_guessing(game.id, close_round)
+
+    async def _remove_player(self, game: GameRecord, user_id: str, notice_text: str) -> str | None:
+        """Shared by leave and kick: mark the player left, then fix up hosting, a round
+        waiting on their sentence, and early end. Returns a round id to close, if any.
+        Caller holds the lock."""
+        await self.repo.update_player(
+            game.id, user_id, status=PlayerStatus.LEFT, left_at=self.clock.now()
+        )
+        await self._notice(game, notice_text)
+        game = await self._transfer_host_if_needed(game)
+        rnd = await self.repo.get_current_round(game.id)
+        if (
+            game.state is GameState.AWAITING_SENTENCE
+            and rnd is not None
+            and rnd.status is RoundStatus.AWAITING_SENTENCE
+            and rnd.writer_user_id == user_id
+        ):
+            game = await self._skip_round(
+                game, rnd, f"{blocks.mention(user_id)} left before writing.", missed=False
+            )
+        await self._refresh_lobby(game)
+        await self._touch(game.id)
+        log.info("player_removed", game_id=game.id, user_id=user_id)
+        return await self._everyone_has_guessed(game)
 
     # ===================================================================================
     # Starting the game and the writer phase (spec §3.1, §3.3, §3.4)
@@ -233,6 +269,73 @@ class GameEngine:
             await self._touch(game.id)
             log.info("sentence_accepted", game_id=game.id, round_id=round_id)
         await self._generate_and_distribute(rnd.game_id, round_id)
+
+    async def on_writer_reminder(self, game_id: str, round_id: str) -> None:
+        async with self._lock(game_id):
+            live = await self._live_round(game_id, round_id, GameState.AWAITING_SENTENCE)
+            if live is None:
+                return
+            _, rnd = live
+            if rnd.writer_deadline is None:
+                return
+            seconds_left = max(0, round((rnd.writer_deadline - self.clock.now()).total_seconds()))
+            await self._dm(rnd.writer_user_id, *blocks.writer_reminder(seconds_left, round_id))
+
+    async def on_writer_timeout(self, game_id: str, round_id: str) -> None:
+        """The writer missed the deadline: skip the round (spec §3.4)."""
+        async with self._lock(game_id):
+            live = await self._live_round(game_id, round_id, GameState.AWAITING_SENTENCE)
+            if live is None:
+                return
+            game, rnd = live
+            await self._skip_round(
+                game,
+                rnd,
+                f"{blocks.mention(rnd.writer_user_id)} didn't submit in time.",
+                missed=True,
+            )
+
+    async def _skip_round(
+        self, game: GameRecord, rnd: RoundRecord, reason: str, *, missed: bool
+    ) -> GameRecord:
+        """Skip a round waiting for a sentence. With ``missed``, count a miss against the
+        writer (3 in a row → inactive). Caller holds the lock."""
+        now = self.clock.now()
+        self.scheduler.cancel(game.id, TimerKind.WRITER_REMINDER)
+        self.scheduler.cancel(game.id, TimerKind.WRITER_DEADLINE)
+        host_claim_at = now + timedelta(seconds=self.settings.host_claim_after_seconds)
+        await self.repo.update_round(
+            rnd.id, status=RoundStatus.SKIPPED, ended_at=now, host_claim_at=host_claim_at
+        )
+        if missed:
+            writer = await self.repo.get_player(game.id, rnd.writer_user_id)
+            misses = (writer.consecutive_misses if writer else 0) + 1
+            await self.repo.update_player(game.id, rnd.writer_user_id, consecutive_misses=misses)
+            if (
+                writer is not None
+                and writer.status is PlayerStatus.ACTIVE
+                and misses >= self.settings.max_consecutive_misses
+            ):
+                await self.repo.update_player(
+                    game.id, rnd.writer_user_id, status=PlayerStatus.INACTIVE
+                )
+                await self._dm(rnd.writer_user_id, *blocks.inactive_dm())
+                game = await self._transfer_host_if_needed(game)
+                await self._refresh_lobby(game)
+        if rnd.status_message_ts is not None:
+            await self._update(
+                MessageRef(game.channel_id, rnd.status_message_ts),
+                *blocks.notice(f"⏭️ Round {rnd.number}: {reason}"),
+            )
+        game = await self._transition(game, GameEvent.WRITER_TIMEOUT)
+        ref = await self._post(
+            game.channel_id, *blocks.skipped_round(rnd.number, game.id, rnd.id, reason, "host")
+        )
+        if ref is not None:
+            await self.repo.update_round(rnd.id, results_message_ts=ref.ts)
+        self.scheduler.schedule(game.id, TimerKind.HOST_CLAIM, host_claim_at, rnd.id)
+        log.info("round_skipped", game_id=game.id, round_id=rnd.id, missed=missed)
+        return game
 
     async def _validate_sentence(
         self, game_id: str, round_id: str, user_id: str, sentence: str
@@ -746,6 +849,37 @@ class GameEngine:
                 return
             await self._end(game, "idle")
 
+    async def on_host_claim_available(self, game_id: str, round_id: str) -> None:
+        """5 minutes without Next round: offer Claim host (spec §3.10)."""
+        async with self._lock(game_id):
+            game = await self.repo.get_game(game_id)
+            rnd = await self.repo.get_current_round(game_id)
+            if game is None or rnd is None or rnd.id != round_id:
+                return
+            if game.state is GameState.AWAITING_NEXT:
+                await self._rerender_round_message(game, round_id, "claim")
+
+    async def claim_host(self, channel_id: str, user_id: str, round_id: str) -> None:
+        game = await self._require_channel_game(channel_id)
+        async with self._lock(game.id):
+            game = await self._reload(game.id)
+            rnd = await self.repo.get_current_round(game.id)
+            if game.state is not GameState.AWAITING_NEXT or rnd is None or rnd.id != round_id:
+                raise UserFacingError("There's nothing to claim right now.")
+            player = await self.repo.get_player(game.id, user_id)
+            if player is None or player.status is not PlayerStatus.ACTIVE:
+                raise UserFacingError("Only active players can claim host. Click Join first!")
+            if user_id == game.host_user_id:
+                raise UserFacingError("You're already the host.")
+            if rnd.host_claim_at is None or self.clock.now() < rnd.host_claim_at:
+                raise UserFacingError("You can claim host after 5 minutes without a Next round.")
+            game = await self.repo.update_game(game.id, host_user_id=user_id)
+            await self._post(game.channel_id, *blocks.host_changed_notice(user_id))
+            await self._rerender_round_message(game, round_id, "host")
+            await self._refresh_lobby(game)
+            await self._touch(game.id)
+            log.info("host_claimed", game_id=game.id, user_id=user_id)
+
     async def _end(self, game: GameRecord, reason: str) -> None:
         """End the game: void any round in progress, post the final scoreboard, free the
         channel and players. Caller holds the lock."""
@@ -811,11 +945,24 @@ class GameEngine:
         rnd = await self.repo.get_round(round_id)
         if rnd is None or rnd.results_message_ts is None:
             return
+        ref = MessageRef(game.channel_id, rnd.results_message_ts)
         if rnd.status is RoundStatus.COMPLETED:
             text, message_blocks, _ = await self._render_results(game, round_id, controls)
+            await self._update(ref, text, message_blocks)
+        elif rnd.status is RoundStatus.SKIPPED:
             await self._update(
-                MessageRef(game.channel_id, rnd.results_message_ts), text, message_blocks
+                ref,
+                *blocks.skipped_round(
+                    rnd.number, game.id, rnd.id, await self._skip_reason(rnd), controls
+                ),
             )
+
+    async def _skip_reason(self, rnd: RoundRecord) -> str:
+        who = blocks.mention(rnd.writer_user_id)
+        writer = await self.repo.get_player(rnd.game_id, rnd.writer_user_id)
+        if writer is not None and writer.status is PlayerStatus.LEFT:
+            return f"{who} left before writing."
+        return f"{who} didn't submit in time."
 
     # ===================================================================================
     # Helpers
@@ -901,7 +1048,7 @@ class GameEngine:
             return game
         new_host = candidates[0]  # get_players is ordered by joined_at
         game = await self.repo.update_game(game.id, host_user_id=new_host.user_id)
-        await self._notice(game, f"👑 {blocks.mention(new_host.user_id)} is now the host.")
+        await self._post(game.channel_id, *blocks.host_changed_notice(new_host.user_id))
         log.info("host_transferred", game_id=game.id, user_id=new_host.user_id)
         return game
 
