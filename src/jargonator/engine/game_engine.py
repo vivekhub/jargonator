@@ -49,6 +49,8 @@ log = structlog.get_logger()
 
 MIN_SENTENCE, MAX_SENTENCE = 5, 150
 MIN_GUESS, MAX_GUESS = 1, 200
+DM_CONCURRENCY = 8
+"""Most Slack calls in flight at once when DMing all the guessers."""
 NOT_IN_CHANNEL_CODES = frozenset({"not_in_channel", "channel_not_found", "is_archived"})
 INVITE_HINT = "I can't post here yet. Invite me with `/invite @Jargonator` first, then try again."
 
@@ -627,8 +629,13 @@ class GameEngine:
             if live is None:
                 return  # e.g. the game ended while the LLM was working
             game, rnd = live
-            now = self.clock.now()
-            deadline = now + timedelta(seconds=game.guess_seconds)
+            guesser_ids = [u for u in await self._active_ids(game_id) if u != rnd.writer_user_id]
+            limit = asyncio.Semaphore(DM_CONCURRENCY)
+            channels = await asyncio.gather(*(self._open_dm(u, limit) for u in guesser_ids))
+            recipients = [(u, c) for u, c in zip(guesser_ids, channels, strict=True) if c]
+            # The clock starts once the (slow, first-time) DM channels are open, so every
+            # guesser gets close to the full time (spec §3.6).
+            deadline = self.clock.now() + timedelta(seconds=game.guess_seconds)
             await self.repo.update_round(
                 round_id,
                 jargon=jargon,
@@ -636,19 +643,12 @@ class GameEngine:
                 guess_deadline=deadline,
                 status=RoundStatus.GUESSING,
             )
-            recipients: list[tuple[str, str]] = []
-            for user_id in await self._active_ids(game_id):
-                if user_id == rnd.writer_user_id:
-                    continue
-                try:
-                    recipients.append((user_id, await self.slack.open_dm(user_id)))
-                except SlackDeliveryError as exc:
-                    log.warning("guesser_unreachable", user_id=user_id, code=exc.code)
             await self.repo.add_round_guessers(round_id, recipients)
-            for user_id, dm_channel in recipients:
-                ref = await self._post(
-                    dm_channel, *blocks.guess_prompt(rnd.number, level, jargon, deadline, round_id)
-                )
+            prompt = blocks.guess_prompt(rnd.number, level, jargon, deadline, round_id)
+            refs = await asyncio.gather(
+                *(self._post_limited(limit, c, *prompt) for _, c in recipients)
+            )
+            for (user_id, _), ref in zip(recipients, refs, strict=True):
                 if ref is not None:
                     await self.repo.set_guesser_dm_ts(round_id, user_id, ref.ts)
             game = await self._transition(game, GameEvent.JARGON_READY)
@@ -1255,6 +1255,21 @@ class GameEngine:
         except SlackDeliveryError as exc:
             log.warning("slack_post_failed", channel_id=channel, code=exc.code)
             return None
+
+    async def _open_dm(self, user_id: str, limit: asyncio.Semaphore) -> str | None:
+        """The user's DM channel, or ``None`` (logged) if Slack refuses."""
+        async with limit:
+            try:
+                return await self.slack.open_dm(user_id)
+            except SlackDeliveryError as exc:
+                log.warning("guesser_unreachable", user_id=user_id, code=exc.code)
+                return None
+
+    async def _post_limited(
+        self, limit: asyncio.Semaphore, channel: str, text: str, message_blocks: Sequence[Block]
+    ) -> MessageRef | None:
+        async with limit:
+            return await self._post(channel, text, message_blocks)
 
     async def _update(self, ref: MessageRef, text: str, message_blocks: Sequence[Block]) -> None:
         try:

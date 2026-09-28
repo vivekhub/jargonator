@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from jargonator.domain.state import GameState, JargonLevel, RoundStatus
+from jargonator.engine.game_engine import DM_CONCURRENCY
 from jargonator.engine.scheduler import TimerKind
 from jargonator.llm.client import LLMError
 from jargonator.slack import ids
@@ -133,3 +134,39 @@ async def test_undeliverable_guesser_is_skipped(harness: Harness) -> None:
     harness.slack.fail_dm(other[0], "cannot_dm_bot")
     await harness.write()
     assert await harness.guessers() == [other[1]]
+
+
+async def test_guess_clock_starts_after_the_dm_channels_are_open(harness: Harness) -> None:
+    await harness.started("U1", "U2", "U3", "U4")
+    harness.slack.on_open_dm = lambda _user: harness.clock.advance(1)
+    before = harness.clock.now()
+    rnd = await harness.write()
+    assert harness.clock.now() > before  # opening DMs took (fake) time
+    assert rnd.guess_deadline == harness.clock.now() + timedelta(seconds=60)
+    game = await harness.game()
+    assert harness.recorder.when(game.id, TimerKind.GUESS_DEADLINE) == rnd.guess_deadline
+
+
+async def test_guess_prompts_are_sent_concurrently_within_the_limit(harness: Harness) -> None:
+    users = [f"U{i}" for i in range(1, 21)]
+    await harness.started(*users)
+    harness.slack.max_in_flight = 0
+    rnd = await harness.write()
+    assert 1 < harness.slack.max_in_flight <= DM_CONCURRENCY
+    guessers = [u for u in users if u != rnd.writer_user_id]
+    assert sorted(await harness.guessers()) == sorted(guessers)
+    stored = await harness.repo.get_round_guessers(rnd.id)
+    assert all(g.dm_message_ts is not None for g in stored)
+
+
+async def test_one_failed_prompt_does_not_stop_the_others(harness: Harness) -> None:
+    rnd = await harness.started("U1", "U2", "U3", "U4")
+    others = sorted({"U1", "U2", "U3", "U4"} - {rnd.writer_user_id})
+    harness.slack.fail_dm(others[0], "cannot_dm_bot")
+    harness.slack.fail_channel(f"D{others[1]}", "channel_not_found")
+    rnd = await harness.write()
+    assert sorted(await harness.guessers()) == others[1:]
+    stored = {g.user_id: g for g in await harness.repo.get_round_guessers(rnd.id)}
+    assert stored[others[1]].dm_message_ts is None
+    assert stored[others[2]].dm_message_ts is not None
+    assert harness.slack.dms_to(others[2])

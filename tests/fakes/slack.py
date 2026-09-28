@@ -1,7 +1,8 @@
 """In-memory SlackGateway that records everything, for engine and adapter tests."""
 
+import asyncio
 import itertools
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +32,11 @@ class FakeSlackGateway:
         self._ts = itertools.count(1)
         self._channel_failures: dict[str, str] = {}
         self._dm_failures: dict[str, str] = {}
+        self.in_flight = 0
+        self.max_in_flight = 0
+        """Peak number of overlapping ``open_dm``/``post_message`` calls."""
+        self.on_open_dm: Callable[[str], None] | None = None
+        """Called with the user inside every ``open_dm`` (e.g. to advance a fake clock)."""
 
     # --- failure injection --------------------------------------------------------------
 
@@ -44,12 +50,22 @@ class FakeSlackGateway:
         if channel in self._channel_failures:
             raise SlackDeliveryError(self._channel_failures[channel])
 
+    async def _overlap(self) -> None:
+        """Yield once while counted as in flight, so concurrent callers can overlap."""
+        self.in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        try:
+            await asyncio.sleep(0)
+        finally:
+            self.in_flight -= 1
+
     # --- SlackGateway ---------------------------------------------------------------------
 
     async def post_message(
         self, channel: str, text: str, blocks: Sequence[Block], thread_ts: str | None = None
     ) -> MessageRef:
         self.calls.append(("post_message", {"channel": channel, "text": text}))
+        await self._overlap()
         self._check(channel)
         ref = MessageRef(channel, f"{1000 + next(self._ts)}.000100")
         self.messages[ref] = FakeMessage(ref, text, list(blocks), thread_ts)
@@ -72,6 +88,9 @@ class FakeSlackGateway:
 
     async def open_dm(self, user: str) -> str:
         self.calls.append(("open_dm", {"user": user}))
+        await self._overlap()
+        if self.on_open_dm is not None:
+            self.on_open_dm(user)
         if user in self._dm_failures:
             raise SlackDeliveryError(self._dm_failures[user])
         return f"D{user}"
