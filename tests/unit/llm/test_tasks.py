@@ -1,3 +1,6 @@
+import random
+from collections.abc import Callable
+
 import pytest
 
 from jargonator.domain.state import JargonLevel
@@ -13,12 +16,18 @@ async def no_sleep(_: float) -> None:
     return None
 
 
-def make(*script: object) -> tuple[OpenRouterTasks, StubCompletions]:
+def keep_order(_: list[str]) -> None:
+    return None
+
+
+def make(
+    *script: object, shuffle: Callable[[list[str]], None] = keep_order
+) -> tuple[OpenRouterTasks, StubCompletions]:
     stub = StubCompletions(*script)  # type: ignore[arg-type]
     client = OpenRouterClient(
         stub, models=MODELS, fallback_model="fallback/model", timeout=5, sleep=no_sleep
     )
-    return OpenRouterTasks(client), stub
+    return OpenRouterTasks(client, shuffle=shuffle), stub
 
 
 def failures(n: int = 4) -> list[object]:
@@ -139,6 +148,24 @@ async def test_judge_raises_when_always_invalid() -> None:
     tasks, _ = make(bad, bad, bad, bad)
     with pytest.raises(LLMError):
         await tasks.judge("s", "j", GUESSES)
+
+
+async def test_judge_sees_guesses_in_shuffled_order() -> None:
+    """The judge must not learn the submission order from the ids or the list order."""
+    tasks, stub = make(
+        json_completion({"scores": [{"id": "g1", "score": 20}, {"id": "g2", "score": 95}]}),
+        shuffle=lambda ids: ids.reverse(),
+    )
+    scores = await tasks.judge("I have two cats", "feline portfolio", GUESSES)
+    first, second = GUESSES  # submission order
+    assert scores == {second: 20, first: 95}
+    user = stub.user()
+    assert user.index(f'"g1">{GUESSES[second]}') < user.index(f'"g2">{GUESSES[first]}')
+
+
+def test_judge_shuffles_randomly_by_default() -> None:
+    client = OpenRouterClient(StubCompletions(), models=MODELS, fallback_model="f", timeout=5)
+    assert OpenRouterTasks(client)._shuffle == random.shuffle
 
 
 async def test_judge_empty_input_skips_llm() -> None:

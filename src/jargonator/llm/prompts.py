@@ -143,6 +143,8 @@ Guesses that share words but change the meaning score low.
 - Ignore spelling, grammar, case and punctuation.
 - Score each guess against the original sentence (the jargon is only context), and be \
 consistent across guesses.
+- The guesses are in random order. Their order, position and ids mean nothing: score each \
+guess on its meaning alone.
 
 {DATA_NOTICE}
 

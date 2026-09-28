@@ -69,6 +69,7 @@ def test_judge_prompt_contains_rubric_and_all_guesses() -> None:
     for band in ("90–100", "70–89", "40–69", "10–39", "0–9"):
         assert band in system
     assert "meaning" in system.lower() and "wording" in system.lower()
+    assert "random order" in system and "order" in system and "position" in system
     assert "<sentence>I have two cats</sentence>" in user
     assert "<jargon>dual-feline portfolio</jargon>" in user
     assert '<guess id="g1">kitties</guess>' in user and '<guess id="g2">two dogs</guess>' in user

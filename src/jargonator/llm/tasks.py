@@ -6,9 +6,12 @@ Failure policy (spec §7.2, §7.5, §3.11):
 - generate_jargon and judge raise ``LLMError`` (the engine applies the essential-LLM rule);
 - quip returns ``None``.
 Player ids never reach the LLM: guesses are relabelled g1, g2, ... and mapped back.
+The judge gets the guesses shuffled, so neither ids nor list order reveal who guessed
+first (LLMs can favour items by position).
 """
 
-from collections.abc import Collection, Mapping, Sequence
+import random
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Protocol
 
 import structlog
@@ -62,8 +65,11 @@ def truncate_words(text: str, limit: int) -> str:
 
 
 class OpenRouterTasks:
-    def __init__(self, client: OpenRouterClient) -> None:
+    def __init__(
+        self, client: OpenRouterClient, shuffle: Callable[[list[str]], None] = random.shuffle
+    ) -> None:
         self._client = client
+        self._shuffle = shuffle
 
     async def moderate_sentence(self, sentence: str) -> SentenceModeration:
         system, user = prompts.sentence_moderation_prompt(sentence)
@@ -115,7 +121,9 @@ class OpenRouterTasks:
     async def judge(self, original: str, jargon: str, guesses: Mapping[str, str]) -> dict[str, int]:
         if not guesses:
             return {}
-        short, back = _relabel(guesses)
+        order = list(guesses)
+        self._shuffle(order)
+        short, back = _relabel({gid: guesses[gid] for gid in order})
         system, user = prompts.judge_prompt(original, jargon, short)
 
         def one_score_per_guess(result: JudgeResult) -> None:
