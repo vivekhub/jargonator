@@ -23,10 +23,19 @@
     },
     {
       "text": {
-        "text": "🥇 <@U2>: “I own a pair of kitties” · 95/100 · *+10*\n🥈 <@U3>: “I have a cat” · 80/100 · *+5*\n🥉 <@U4>: “I own pets” · 55/100 · *+1*",
+        "text": "🥇 <@U2>: “I own a pair of kitties” · 95/100 · 📥 3rd in · *+10*\n🥈 <@U3>: “I have a cat” · 80/100 · 📥 1st in · *+5*\n🥉 <@U4>: “I own pets” · 55/100 · 📥 2nd in · *+1*",
         "type": "mrkdwn"
       },
       "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "text": "Ranked by the judge's score out of 100. 📥 is the order the guesses came in: ties go to whoever guessed first.",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
     },
     {
       "elements": [
@@ -97,7 +106,7 @@
   "thread": [
     {
       "text": {
-        "text": "*Other guesses*\n• <@U4>: “guess 4” · 26/100\n• <@U5>: “guess 5” · 25/100\n• <@U6>: “guess 6” · 24/100\n• <@U7>: “guess 7” · 23/100\n• <@U8>: “guess 8” · 22/100\n• <@U9>: “guess 9” · 21/100\n• <@U10>: “guess 10” · 20/100",
+        "text": "*Other guesses*\n• <@U4>: “guess 4” · 26/100 · 📥 4th in\n• <@U5>: “guess 5” · 25/100 · 📥 5th in\n• <@U6>: “guess 6” · 24/100 · 📥 6th in\n• <@U7>: “guess 7” · 23/100 · 📥 7th in\n• <@U8>: “guess 8” · 22/100 · 📥 8th in\n• <@U9>: “guess 9” · 21/100 · 📥 9th in\n• <@U10>: “guess 10” · 20/100 · 📥 10th in",
         "type": "mrkdwn"
       },
       "type": "section"

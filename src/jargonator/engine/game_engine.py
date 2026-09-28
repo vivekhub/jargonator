@@ -946,10 +946,13 @@ class GameEngine:
         """Build M6 from the database, so it can be re-rendered later (claim host, next)."""
         rnd = await self.repo.get_round(round_id)
         assert rnd is not None
-        guesses = await self.repo.get_guesses(round_id)
+        guesses = await self.repo.get_guesses(round_id)  # in submission order
+        queue = {g.id: position for position, g in enumerate(guesses, start=1)}
         ranked = sorted((g for g in guesses if g.rank is not None), key=lambda g: g.rank or 0)
         lines = [
-            blocks.ResultLine(g.user_id, g.text, g.score, g.points, g.rank, g.moderated_out)
+            blocks.ResultLine(
+                g.user_id, g.text, g.score, g.points, g.rank, g.moderated_out, queue[g.id]
+            )
             for g in [*ranked, *(g for g in guesses if g.rank is None)]
         ]
         players = await self.repo.get_players(game.id)

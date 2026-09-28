@@ -45,6 +45,8 @@ async def test_points_persisted_and_shown(harness: Harness) -> None:
     assert (await harness.game()).state is GameState.AWAITING_NEXT
     shown = await results_message(harness)
     assert "95/100" in shown and "I have two cats" in shown and "Leaderboard" in shown
+    # "kitties" won but was the 4th guess in; "trains" came in 1st.
+    assert "95/100 · 📥 4th in" in shown and "5/100 · 📥 1st in" in shown
     assert ids.NEXT in shown
     guesses = {g.text: g for g in await harness.repo.get_guesses(rnd.id)}
     assert (guesses["kitties"].score, guesses["kitties"].rank, guesses["kitties"].points) == (

@@ -42,6 +42,12 @@ def plural(count: int, noun: str) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
+def ordinal(n: int) -> str:
+    """1 → "1st", 2 → "2nd", 11 → "11th", 23 → "23rd"."""
+    suffix = "th" if n % 100 in (11, 12, 13) else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
 def mention(user_id: str) -> str:
     return f"<@{user_id}>"
 
@@ -257,13 +263,20 @@ class ResultLine:
     points: int
     rank: int | None
     moderated: bool
+    submitted: int
+    """1-based position in the round's submission queue (moderated guesses included)."""
+
+
+def _details(line: ResultLine) -> str:
+    """Score and queue position, so players can see why a tie went the way it did."""
+    score = f" · {line.score}/100" if line.score is not None else ""
+    return f"{score} · 📥 {ordinal(line.submitted)} in"
 
 
 def _guess_line(line: ResultLine) -> str:
     if line.moderated:
         return f"• {mention(line.user_id)}: 🚫 [hidden by moderation]"
-    score = f" · {line.score}/100" if line.score is not None else ""
-    return f"• {mention(line.user_id)}: “{escape(line.text)}”{score}"
+    return f"• {mention(line.user_id)}: “{escape(line.text)}”{_details(line)}"
 
 
 def _leaderboard(standings: Sequence[Standing]) -> str:
@@ -325,9 +338,15 @@ def results(
             _section(
                 "\n".join(
                     f"{MEDALS[line.rank or 0]} {mention(line.user_id)}: “{escape(line.text)}”"
-                    f" · {line.score}/100 · *+{line.points}*"
+                    f"{_details(line)} · *+{line.points}*"
                     for line in top
                 )
+            )
+        )
+        out.append(
+            _context(
+                "Ranked by the judge's score out of 100. 📥 is the order the guesses came in: "
+                "ties go to whoever guessed first."
             )
         )
     if writer_bonus_points:

@@ -23,10 +23,19 @@
     },
     {
       "text": {
-        "text": "🥇 <@U2>: “I like trains” · 20/100 · *+10*",
+        "text": "🥇 <@U2>: “I like trains” · 20/100 · 📥 1st in · *+10*",
         "type": "mrkdwn"
       },
       "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "text": "Ranked by the judge's score out of 100. 📥 is the order the guesses came in: ties go to whoever guessed first.",
+          "type": "mrkdwn"
+        }
+      ],
+      "type": "context"
     },
     {
       "text": {
